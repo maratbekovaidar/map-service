@@ -71,6 +71,8 @@ curl -s localhost/readyz
 
 Карта: `http://localhost/tiles/preview.html`.
 
+Документация API (Swagger UI с «Try it out»): `http://localhost/docs`; нажмите **Authorize** и введите ключ из `API_KEYS`, чтобы вызывать `/v1/*` прямо со страницы. Спецификация — `http://localhost/openapi.yaml` (`servers` в ней подставляется под адрес, с которого её открыли).
+
 | Цель make | |
 |---|---|
 | `make init-data` | первичная загрузка и сборка всех данных |
@@ -108,7 +110,7 @@ Gateway не стартует с пустым `API_KEYS` (кроме явног�
 
 ## API
 
-Полный контракт: [`api/openapi.yaml`](api/openapi.yaml) (OpenAPI 3.1). Все вызовы `/v1/*` требуют `X-API-Key`; `/healthz`, `/readyz` и `/tiles/*` — нет (если не включён `AUTH_REQUIRE_FOR_TILES=true`). Ответы — собственный JSON; ответы upstream наружу не отдаются.
+Полный контракт: [`api/openapi.yaml`](api/openapi.yaml) (OpenAPI 3.1; шлюз отдаёт его на `/openapi.yaml`, интерактивно — на `/docs`). Все вызовы `/v1/*` требуют `X-API-Key`; `/healthz`, `/readyz`, `/docs` и `/tiles/*` — нет (если не включён `AUTH_REQUIRE_FOR_TILES=true`). Ответы — собственный JSON; ответы upstream наружу не отдаются.
 
 ```bash
 export B=http://localhost K=your-api-key
@@ -227,6 +229,7 @@ Flutter (`maplibre_gl`): `styleString: 'https://maps.example.com/tiles/style.jso
 | OSM Liberty | коммит `da16155` | совместим с OpenMapTiles, разрешительная лицензия; каждый скачиваемый файл закреплён по sha256 |
 | Глифы Noto Sans | openmaptiles/fonts v2.0 | OFL; покрывает латиницу, кириллицу и казахские буквы Ә Ғ Қ Ң Ө Ұ Ү Һ І, а также ₸ (в репозитории только 9 диапазонов Unicode × 3 начертания, 2,4 МБ) |
 | MapLibre GL JS | 5.24.0 | только для `preview.html`, вложен в репозиторий. 6.x (на момент закрепления вышел 3 дня назад) — только ES-модули с отдельным воркером |
+| Swagger UI | 5.32.15 (swagger-ui-dist) | только для `/docs`, вложен в репозиторий, закреплён по sha256 (Apache-2.0). Берётся не самый свежий релиз (5.33.x вышел недавно), а предыдущая линия, которой уже больше месяца |
 | Caddy | 2.11.7-alpine | последний 2.x |
 | Redis | 8.10.2-alpine | последний 8.x. Замечание: Redis 8 лицензирован ещё и по AGPLv3 / RSALv2 / SSPL; если это важно — используйте `valkey/valkey` |
 | osmium-tool | 1.19.1 (libosmium 2.23.1, protozero 1.8.2), собирается из тегов | в Alpine нет пакета `osmium-tool` |

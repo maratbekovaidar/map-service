@@ -27,6 +27,10 @@ const (
 	// MapLibre GL JS 5.24.0: the last 5.x line, shipped as one UMD bundle
 	// (6.x is ES-module only with a separate worker file).
 	maplibreVersion = "5.24.0"
+
+	// Swagger UI 5.32.15 (swagger-ui-dist): the bundle and stylesheet of the
+	// /docs page, plus the licence texts that must ship with them.
+	swaggerUIVersion = "5.32.15"
 )
 
 // Source is one pinned download.
@@ -64,6 +68,25 @@ func MapLibreFiles() []Source {
 	return []Source{
 		{"maplibre-gl.js", base + "maplibre-gl.js", "45a9b07a9189ce56054c620a947ccf41e291e58c95e9b61533b740aaa65ee5cb"},
 		{"maplibre-gl.css", base + "maplibre-gl.css", "ab1e70d59ec40465bae7e7030da2f3ccf28133fd502e62bd598eefbadfd7a732"},
+	}
+}
+
+// SwaggerUIFiles are the vendored browser files of the /docs page.
+func SwaggerUIFiles() []Source {
+	base := "https://cdn.jsdelivr.net/npm/swagger-ui-dist@" + swaggerUIVersion + "/"
+	return []Source{
+		{"swagger-ui-bundle.js", base + "swagger-ui-bundle.js", "a7e344f2770b2f07527ce828e0951626983b8f2dcdb7a826689c0232023f995b"},
+		{"swagger-ui.css", base + "swagger-ui.css", "d7f39f764aa18c7b47dd05b9af5613e373e4ac0f3557c2693d52d0abc2464d76"},
+	}
+}
+
+// SwaggerUILicenses are the Apache-2.0 text of Swagger UI and the notices of
+// the third-party code inside its bundle.
+func SwaggerUILicenses() []Source {
+	base := "https://cdn.jsdelivr.net/npm/swagger-ui-dist@" + swaggerUIVersion + "/"
+	return []Source{
+		{"Swagger-UI-LICENSE.txt", base + "LICENSE", "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"},
+		{"Swagger-UI-bundle-third-party.txt", base + "swagger-ui-bundle.js.LICENSE.txt", "63818894e4b04cd0e3180d9cb20761e227a939121e7484f8e1d528227c756f89"},
 	}
 }
 

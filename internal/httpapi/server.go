@@ -170,6 +170,13 @@ func (s *Server) Handler() http.Handler {
 	route(mux, "GET", "/tiles/vendor/{file}", assets(s.handleVendor))
 	route(mux, "GET", "/tiles/{z}/{x}/{file}", assets(s.handleTile))
 
+	// API documentation: public (the key is entered in the page itself), on
+	// the same per-IP bucket as the static assets.
+	docs := func(h handlerFunc) http.Handler { return chain(s.wrap(h), limitByIP(s.tileLim, ip)) }
+	route(mux, "GET", "/docs", docs(s.handleDocs))
+	route(mux, "GET", "/docs/{file}", docs(s.handleDocsAsset))
+	route(mux, "GET", "/openapi.yaml", docs(s.handleOpenAPI))
+
 	route(mux, "GET", "/healthz", s.wrap(s.handleHealthz))
 	route(mux, "GET", "/readyz", s.wrap(s.handleReadyz))
 	mux.Handle("/", s.wrap(func(w http.ResponseWriter, r *http.Request) error {

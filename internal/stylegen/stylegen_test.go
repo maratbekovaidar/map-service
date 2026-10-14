@@ -317,6 +317,8 @@ func TestFetchVerifiesAndCaches(t *testing.T) {
 func TestPinsAreRealHashes(t *testing.T) {
 	all := append(LibertyFiles(), NotoGlyphs(), NotoLicense())
 	all = append(all, MapLibreFiles()...)
+	all = append(all, SwaggerUIFiles()...)
+	all = append(all, SwaggerUILicenses()...)
 	for _, s := range all {
 		if len(s.SHA256) != 64 || strings.Trim(s.SHA256, "0123456789abcdef") != "" {
 			t.Errorf("%s: SHA256 %q is not a pinned hash", s.Name, s.SHA256)

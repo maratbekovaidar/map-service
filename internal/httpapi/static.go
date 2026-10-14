@@ -191,8 +191,14 @@ func (s *Server) handleSprite(w http.ResponseWriter, r *http.Request) error {
 
 // GET /tiles/vendor/{file} - the MapLibre GL JS files used by preview.html.
 func (s *Server) handleVendor(w http.ResponseWriter, r *http.Request) error {
+	return s.serveVendor(w, r, vendorFiles)
+}
+
+// serveVendor serves the {file} of the request from STATIC_DIR/vendor when it
+// is one of allowed (file name -> content type); nothing else is reachable.
+func (s *Server) serveVendor(w http.ResponseWriter, r *http.Request, allowed map[string]string) error {
 	name := r.PathValue("file")
-	ct, ok := vendorFiles[name]
+	ct, ok := allowed[name]
 	if !ok {
 		return notFound("no such file")
 	}
