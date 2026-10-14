@@ -1,0 +1,328 @@
+# map-service stack. Always invoke through the Makefile (or the updater): it
+# exports DATA_DIR / DATA_VERSION / REPO_DIR which this file relies on.
+#
+# Networks
+#   edge     - caddy <-> gateway. The only network with internet access.
+#   internal - gateway, redis, nominatim, photon, osrm-*. `internal: true`
+#              means NO egress at all: the map backends physically cannot
+#              call external map APIs, and publish no ports to the host.
+#
+# Image pinning policy: every image carries an explicit tag (or digest).
+# Pipeline-only tools live here too (profile "tools") so that this file is the
+# single source of truth for versions; the updater runs them through
+# `docker compose run`.
+name: ${COMPOSE_PROJECT_NAME:-mapsvc}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# OSRM image: tag format is vX.Y.Z-debian (multi-arch amd64/arm64).
+x-osrm-image: &osrm-image ghcr.io/project-osrm/osrm-backend:v26.10.0-debian
+
+x-osrm: &osrm
+  image: *osrm-image
+  restart: unless-stopped
+  logging: *logging
+  networks: [internal]
+  deploy:
+    resources:
+      limits:
+        memory: 512m
+  healthcheck:
+    # The image ships neither curl nor wget, and its /bin/sh is dash, which has
+    # no /dev/tcp - so the probe must run under bash explicitly.
+    test:
+      - CMD
+      - bash
+      - -c
+      - >-
+        exec 3<>/dev/tcp/127.0.0.1/5000 &&
+        printf 'GET /nearest/v1/driving/71.43,51.12 HTTP/1.0\r\n\r\n' >&3 &&
+        head -n1 <&3 | grep -q 'HTTP/1.[01] 200'
+    interval: 20s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+
+x-nominatim-env: &nominatim-env
+  # The PBF is mounted OUTSIDE /nominatim: the entrypoint runs `chown -R` on
+  # /nominatim and would fail on a read-only bind mount placed inside it.
+  PBF_PATH: /pbf/city.osm.pbf
+  NOMINATIM_PASSWORD: ${NOMINATIM_PASSWORD:?set NOMINATIM_PASSWORD in .env}
+  THREADS: ${NOMINATIM_THREADS:-4}
+  GUNICORN_WORKERS: ${NOMINATIM_GUNICORN_WORKERS:-2}
+  IMPORT_WIKIPEDIA: ${NOMINATIM_IMPORT_WIKIPEDIA:-false}
+  POSTGRES_SHARED_BUFFERS: ${POSTGRES_SHARED_BUFFERS:-768MB}
+  POSTGRES_MAINTENANCE_WORK_MEM: ${POSTGRES_MAINTENANCE_WORK_MEM:-1GB}
+  POSTGRES_WORK_MEM: ${POSTGRES_WORK_MEM:-32MB}
+  POSTGRES_EFFECTIVE_CACHE_SIZE: ${POSTGRES_EFFECTIVE_CACHE_SIZE:-2GB}
+  POSTGRES_AUTOVACUUM_WORK_MEM: ${POSTGRES_AUTOVACUUM_WORK_MEM:-256MB}
+
+x-nominatim: &nominatim
+  image: mediagis/nominatim:5.3.2
+  logging: *logging
+  shm_size: 512m
+  networks: [internal]
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/status >/dev/null"]
+    interval: 20s
+    timeout: 5s
+    retries: 5
+    start_period: 120s
+
+services:
+  # ---------------------------------------------------------------- edge ----
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge]
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/gateway.Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:-mapsvc}-gateway:local
+    restart: unless-stopped
+    logging: *logging
+    env_file: ../.env
+    environment:
+      # Inside the container the data root is always /data (read-only).
+      DATA_ROOT: /data
+      STATIC_DIR: /app/static
+      GATEWAY_LISTEN_ADDR: ":8080"
+    volumes:
+      - ${DATA_DIR:?DATA_DIR is exported by the Makefile}:/data:ro
+    networks: [edge, internal]
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/gateway", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:8.10.2-alpine
+    restart: unless-stopped
+    logging: *logging
+    # Pure cache: no persistence, bounded memory, LRU eviction.
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ------------------------------------------------------------ backends ----
+  nominatim:
+    <<: *nominatim
+    restart: unless-stopped
+    environment: *nominatim-env
+    volumes:
+      # One named volume per data version: a new import never touches the
+      # database that currently serves traffic.
+      - nominatim-pg:/var/lib/postgresql/16/main
+      - ${DATA_DIR}/${DATA_VERSION:-none}/city.osm.pbf:/pbf/city.osm.pbf:ro
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  photon:
+    build:
+      context: ./photon
+      args:
+        PHOTON_VERSION: "1.3.0"
+        PHOTON_SHA256: a89707c0045e4807b2a1180e132e68e108d998709f48b6c94b98a6e281f571a5
+    image: ${COMPOSE_PROJECT_NAME:-mapsvc}-photon:1.3.0
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      JAVA_TOOL_OPTIONS: ${PHOTON_JAVA_OPTS:--Xms256m -Xmx1g}
+    command:
+      - serve
+      - -data-dir
+      - /photon
+      - -listen-ip
+      - 0.0.0.0
+      - -listen-port
+      - "2322"
+    volumes:
+      - ${DATA_DIR}/${DATA_VERSION:-none}/photon:/photon
+    networks: [internal]
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://127.0.0.1:2322/status' >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  osrm-car:
+    <<: *osrm
+    command: [osrm-routed, --algorithm, mld, --port, "5000", /data/city.osrm]
+    volumes:
+      - ${DATA_DIR}/${DATA_VERSION:-none}/osrm/car:/data:ro
+
+  osrm-foot:
+    <<: *osrm
+    command: [osrm-routed, --algorithm, mld, --port, "5000", /data/city.osrm]
+    volumes:
+      - ${DATA_DIR}/${DATA_VERSION:-none}/osrm/foot:/data:ro
+
+  # Optional third profile: COMPOSE_PROFILES=scheduler,bicycle and
+  # ROUTING_PROFILES=car,foot,bicycle.
+  osrm-bicycle:
+    <<: *osrm
+    profiles: [bicycle]
+    command: [osrm-routed, --algorithm, mld, --port, "5000", /data/city.osrm]
+    volumes:
+      - ${DATA_DIR}/${DATA_VERSION:-none}/osrm/bicycle:/data:ro
+
+  # ----------------------------------------------------------- scheduler ----
+  # Runs the updater on UPDATE_CRON. Mounts the docker socket (root-equivalent
+  # on the host) - drop the "scheduler" profile if that is not acceptable and
+  # run `make update-data` from cron/systemd instead.
+  scheduler:
+    profiles: [scheduler]
+    build:
+      context: ..
+      dockerfile: deploy/updater.Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:-mapsvc}-updater:local
+    restart: unless-stopped
+    logging: *logging
+    command: ["cron"]
+    env_file: ../.env
+    environment: &updater-env
+      DATA_DIR: ${DATA_DIR}
+      REPO_DIR: ${REPO_DIR:?REPO_DIR is exported by the Makefile}
+    working_dir: ${REPO_DIR}
+    volumes: &updater-volumes
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same-path mounts: paths the updater passes to `docker compose` must be
+      # valid on the docker host, so they are identical inside and outside.
+      - ${REPO_DIR}:${REPO_DIR}
+      - ${DATA_DIR}:${DATA_DIR}
+    networks: [edge, internal]
+
+  # ======================================================== tools profile ====
+  # Pipeline helpers, started on demand by the updater (never by `make up`).
+  updater:
+    profiles: [tools]
+    build:
+      context: ..
+      dockerfile: deploy/updater.Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:-mapsvc}-updater:local
+    command: ["run"]
+    env_file: ../.env
+    environment: *updater-env
+    working_dir: ${REPO_DIR}
+    volumes: *updater-volumes
+    networks: [edge, internal]
+
+  # osrm-extract / osrm-partition / osrm-customize, and candidate osrm-routed.
+  osrm-tools:
+    profiles: [tools]
+    image: *osrm-image
+    logging: *logging
+    networks: [internal]
+    volumes:
+      - ${DATA_DIR}/${PIPELINE_VERSION:-none}/osrm/${OSRM_PROFILE:-car}:/data
+      - ./osrm:/profiles:ro
+
+  # tilemaker pinned by digest: ghcr.io/systemed only publishes the rolling
+  # "master" tag. This digest is labelled Version=3.2.0 (revision facdf93).
+  tilemaker:
+    profiles: [tools]
+    image: ghcr.io/systemed/tilemaker@sha256:d3eda2790458de727bb0096eebce775984fc060f60901dac6dbfbbb79ae17370
+    logging: *logging
+    network_mode: none
+    working_dir: /config
+    environment:
+      TILE_LANGUAGES: ${LANGUAGES:-ru,kk,en}
+    volumes:
+      - ${DATA_DIR}/${PIPELINE_VERSION:-none}:/data
+      - ./tiles:/config:ro
+
+  # Photon import (reads the candidate Nominatim over PostgreSQL) and
+  # candidate `photon serve` for smoke tests.
+  photon-tools:
+    profiles: [tools]
+    image: ${COMPOSE_PROJECT_NAME:-mapsvc}-photon:1.3.0
+    logging: *logging
+    environment:
+      JAVA_TOOL_OPTIONS: ${PHOTON_IMPORT_JAVA_OPTS:--Xms512m -Xmx1536m}
+    volumes:
+      - ${DATA_DIR}/${PIPELINE_VERSION:-none}/photon:/photon
+    networks: [internal]
+
+  # Freshly imported Nominatim for the version under construction. After the
+  # smoke tests the very same named volume becomes the live `nominatim` one.
+  nominatim-candidate:
+    <<: *nominatim
+    profiles: [tools]
+    container_name: ${COMPOSE_PROJECT_NAME:-mapsvc}-nominatim-candidate
+    restart: "no"
+    environment: *nominatim-env
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/status >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      # The container imports the PBF on its first start (minutes for a city,
+      # hours for a big one). Failed checks inside start_period do not count,
+      # so it stays "starting" until the API answers, then turns "healthy".
+      start_period: 6h
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+    volumes:
+      - nominatim-pg-candidate:/var/lib/postgresql/16/main
+      - ${DATA_DIR}/${PIPELINE_VERSION:-none}/city.osm.pbf:/pbf/city.osm.pbf:ro
+
+networks:
+  edge: {}
+  internal:
+    internal: true
+
+volumes:
+  caddy-data: {}
+  caddy-config: {}
+  nominatim-pg:
+    name: ${COMPOSE_PROJECT_NAME:-mapsvc}-nominatim-pg-${DATA_VERSION:-none}
+  nominatim-pg-candidate:
+    name: ${COMPOSE_PROJECT_NAME:-mapsvc}-nominatim-pg-${PIPELINE_VERSION:-none}

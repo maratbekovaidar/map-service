@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Map preview</title>
+  <!-- Opens the map from this service's own style.json, tiles, glyphs and sprites.
+       MapLibre GL JS is vendored (deploy/tiles/vendor): no third-party hosts are contacted.
+       Served at /tiles/preview.html; add ?key=<API key> when AUTH_REQUIRE_FOR_TILES=true. -->
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <style>
+    html, body { height: 100%; margin: 0; font: 14px/1.4 system-ui, sans-serif; }
+    #map { position: absolute; inset: 0; }
+    #bar { position: absolute; z-index: 2; top: 10px; left: 10px; display: flex; gap: 8px; align-items: center;
+           background: rgba(255,255,255,.92); padding: 6px 10px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+    #status { color: #555; }
+    #status.error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <label>Language <select id="lang"></select></label>
+    <span id="status">loading style…</span>
+  </div>
+  <div id="map"></div>
+
+  <script src="vendor/maplibre-gl.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const apiKey = params.get('key');
+    const statusEl = document.getElementById('status');
+    const langEl = document.getElementById('lang');
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: new URL('style.json', location.href).href,
+      hash: true,
+      attributionControl: { compact: true },
+      // Send the API key to this service only, never to other hosts.
+      transformRequest: (url) =>
+        apiKey && url.startsWith(location.origin) ? { url, headers: { 'X-API-Key': apiKey } } : undefined,
+    });
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+    map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }));
+
+    // Labels use coalesce(name:<lang>, name:latin); switching the language rewrites that expression.
+    const isNameLayer = (l) => l.layout && Array.isArray(l.layout['text-field']) &&
+      JSON.stringify(l.layout['text-field']).includes('name:latin');
+    function setLanguage(lang) {
+      for (const l of map.getStyle().layers) {
+        if (isNameLayer(l)) {
+          map.setLayoutProperty(l.id, 'text-field', ['coalesce', ['get', 'name:' + lang], ['get', 'name:latin']]);
+        }
+      }
+    }
+
+    map.on('load', () => {
+      const langs = (map.getStyle().metadata || {})['map-service:languages'] || ['ru'];
+      for (const l of langs) langEl.add(new Option(l, l));
+      langEl.addEventListener('change', () => setLanguage(langEl.value));
+      statusEl.textContent = 'ok';
+    });
+    map.on('error', (e) => {
+      statusEl.textContent = 'error: ' + ((e.error && e.error.message) || 'see console');
+      statusEl.className = 'error';
+      console.error(e.error || e);
+    });
+  </script>
+</body>
+</html>

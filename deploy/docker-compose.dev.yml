@@ -1,0 +1,36 @@
+# Dev overlay: publishes backend ports on 127.0.0.1 for debugging.
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d
+# (or `make up-dev`). NEVER use it on a public server.
+#
+# Host ports default to uncommon values so they do not collide with a local
+# Redis/PostgreSQL; override them in .env (DEV_*_PORT) if needed.
+#
+# The `internal` network is `internal: true`, which blocks published ports, so
+# every published service is additionally attached to the `dev` bridge.
+services:
+  gateway:
+    ports: ["127.0.0.1:${DEV_GATEWAY_PORT:-8080}:8080"]
+    networks: [edge, internal, dev]
+  nominatim:
+    ports:
+      - "127.0.0.1:${DEV_NOMINATIM_PORT:-8081}:8080"
+      - "127.0.0.1:${DEV_NOMINATIM_PG_PORT:-15432}:5432"
+    networks: [internal, dev]
+  photon:
+    ports: ["127.0.0.1:${DEV_PHOTON_PORT:-2322}:2322"]
+    networks: [internal, dev]
+  osrm-car:
+    ports: ["127.0.0.1:${DEV_OSRM_CAR_PORT:-5001}:5000"]
+    networks: [internal, dev]
+  osrm-foot:
+    ports: ["127.0.0.1:${DEV_OSRM_FOOT_PORT:-5002}:5000"]
+    networks: [internal, dev]
+  osrm-bicycle:
+    ports: ["127.0.0.1:${DEV_OSRM_BICYCLE_PORT:-5003}:5000"]
+    networks: [internal, dev]
+  redis:
+    ports: ["127.0.0.1:${DEV_REDIS_PORT:-16379}:6379"]
+    networks: [internal, dev]
+
+networks:
+  dev: {}

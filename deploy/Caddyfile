@@ -1,0 +1,33 @@
+# SITE_ADDRESS comes from .env:
+#   maps.example.com -> automatic HTTPS (Let's Encrypt), ports 80/443 open
+#   :80              -> plain HTTP (local / behind another TLS terminator)
+{
+	# The admin API is not needed and must not be reachable.
+	admin off
+}
+
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+
+	# Everything goes to the gateway. Caching headers (Cache-Control, ETag)
+	# for tiles are set by the gateway itself, Caddy passes them through.
+	# Caddy appends the client address to X-Forwarded-For; the gateway trusts
+	# it only from TRUSTED_PROXY_CIDRS.
+	reverse_proxy gateway:8080 {
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 40s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

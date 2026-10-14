@@ -1,0 +1,550 @@
+openapi: 3.1.0
+info:
+  title: map-service API
+  version: 1.0.0
+  summary: Geocoding, autocomplete, routing and vector tiles for a single city.
+  description: |
+    Self-hosted map API built on OpenStreetMap data (Nominatim, Photon, OSRM,
+    PMTiles). Responses use the service's own JSON format; raw upstream
+    responses are never returned.
+
+    **Scope.** The service covers one city. Results outside the configured
+    bounding box (`CITY_BBOX`) are dropped, and route points outside it are
+    rejected with `400 invalid_argument`.
+
+    **Authentication.** `/v1/*` requires an API key in the `X-API-Key` header.
+    `/healthz` and `/tiles/*` are public unless `AUTH_REQUIRE_FOR_TILES=true`.
+
+    **Rate limiting.** Token bucket per API key and per client IP. When the
+    limit is exceeded the service answers `429` with a `Retry-After` header.
+
+    **Errors.** Every error has the same shape: `{"error":{"code","message"}}`.
+
+    Data © OpenStreetMap contributors (ODbL). Map style and tile schema ©
+    OpenMapTiles (CC-BY 4.0).
+  license:
+    name: ODbL data; code licence is the repository's
+    url: https://www.openstreetmap.org/copyright
+servers:
+  - url: http://localhost:8080
+    description: Local development (dev compose overlay)
+  - url: https://maps.example.com
+    description: Production behind Caddy
+tags:
+  - name: search
+    description: Geocoding and address autocomplete
+  - name: routing
+    description: Route planning
+  - name: tiles
+    description: Vector tiles and map style resources
+  - name: ops
+    description: Health probes
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /v1/autocomplete:
+    get:
+      tags: [search]
+      operationId: autocomplete
+      summary: Address suggestions while the user types
+      description: |
+        Served by Photon. If Photon fails or returns nothing, the gateway falls
+        back to Nominatim `/search`; the `source` field of every place tells
+        which backend produced it.
+      parameters:
+        - $ref: "#/components/parameters/Query"
+        - name: lat
+          in: query
+          description: Latitude of the user; biases results to be near it. Must be given together with `lon`.
+          schema: { type: number, minimum: -90, maximum: 90 }
+        - name: lon
+          in: query
+          description: Longitude of the user (see `lat`).
+          schema: { type: number, minimum: -180, maximum: 180 }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Lang"
+      responses:
+        "200": { $ref: "#/components/responses/Places" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/Error401" }
+        "429": { $ref: "#/components/responses/Error429" }
+        "502": { $ref: "#/components/responses/Error502" }
+        "504": { $ref: "#/components/responses/Error504" }
+
+  /v1/geocode:
+    get:
+      tags: [search]
+      operationId: geocode
+      summary: Find an address or a place by text
+      description: Served by Nominatim `/search`, restricted to the city bounding box.
+      parameters:
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Lang"
+      responses:
+        "200": { $ref: "#/components/responses/Places" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/Error401" }
+        "429": { $ref: "#/components/responses/Error429" }
+        "502": { $ref: "#/components/responses/Error502" }
+        "504": { $ref: "#/components/responses/Error504" }
+
+  /v1/reverse:
+    get:
+      tags: [search]
+      operationId: reverse
+      summary: Address of a coordinate
+      description: Served by Nominatim `/reverse`. Answers `404 not_found` when nothing is known at the point.
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, minimum: -90, maximum: 90 }
+          example: 51.1283
+        - name: lon
+          in: query
+          required: true
+          schema: { type: number, minimum: -180, maximum: 180 }
+          example: 71.4306
+        - $ref: "#/components/parameters/Lang"
+      responses:
+        "200":
+          description: The place at the coordinate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Place" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/Error401" }
+        "404": { $ref: "#/components/responses/Error404" }
+        "429": { $ref: "#/components/responses/Error429" }
+        "502": { $ref: "#/components/responses/Error502" }
+        "504": { $ref: "#/components/responses/Error504" }
+
+  /v1/route:
+    get:
+      tags: [routing]
+      operationId: route
+      summary: Build a route through two or more points
+      description: Served by the OSRM instance of the requested profile.
+      parameters:
+        - name: profile
+          in: query
+          required: true
+          description: Routing profile; must be one of `ROUTING_PROFILES` (default `car`, `foot`).
+          schema: { type: string, examples: [car] }
+        - name: points
+          in: query
+          required: true
+          description: |
+            Semicolon-separated `lon,lat` pairs, at least two. Every point must
+            lie inside the city bounding box.
+          schema: { type: string }
+          example: "71.4306,51.1283;71.4700,51.1800"
+        - name: alternatives
+          in: query
+          description: Also return alternative routes (only meaningful for two points).
+          schema: { type: boolean, default: false }
+        - name: steps
+          in: query
+          description: Include turn-by-turn `steps` in every leg.
+          schema: { type: boolean, default: false }
+        - name: geometry
+          in: query
+          description: |
+            Geometry encoding: `polyline` (precision 5), `polyline6`
+            (precision 6) or `geojson` (a GeoJSON LineString).
+          schema: { type: string, enum: [polyline, polyline6, geojson], default: polyline }
+      responses:
+        "200":
+          description: One or more routes, best first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RouteResponse" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/Error401" }
+        "404": { $ref: "#/components/responses/Error404" }
+        "429": { $ref: "#/components/responses/Error429" }
+        "502": { $ref: "#/components/responses/Error502" }
+        "504": { $ref: "#/components/responses/Error504" }
+
+  /tiles/{z}/{x}/{y}.mvt:
+    get:
+      tags: [tiles]
+      operationId: getTile
+      summary: Vector tile (Mapbox Vector Tile, OpenMapTiles schema)
+      description: |
+        Gzip-compressed MVT. `204` means the tile exists in the grid but holds
+        no data. The response carries `ETag` and `Cache-Control`; send
+        `If-None-Match` to get `304`.
+      security: [{}, { ApiKeyAuth: [] }]
+      parameters:
+        - { name: z, in: path, required: true, schema: { type: integer, minimum: 0, maximum: 14 } }
+        - { name: x, in: path, required: true, schema: { type: integer, minimum: 0 } }
+        - { name: y, in: path, required: true, schema: { type: integer, minimum: 0 } }
+      responses:
+        "200":
+          description: The tile.
+          headers:
+            Content-Encoding: { schema: { type: string, enum: [gzip] } }
+            ETag: { schema: { type: string } }
+            Cache-Control: { schema: { type: string, example: "public, max-age=3600" } }
+          content:
+            application/vnd.mapbox-vector-tile:
+              schema: { type: string, format: binary }
+        "204": { description: Empty tile. }
+        "304": { description: Not modified. }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/Error401" }
+        "429": { $ref: "#/components/responses/Error429" }
+
+  /tiles/style.json:
+    get:
+      tags: [tiles]
+      operationId: getStyle
+      summary: MapLibre style (OSM Liberty, adapted)
+      description: |
+        Tile, glyph and sprite URLs point back to this service (`PUBLIC_BASE_URL`).
+        The style carries the attribution "© OpenStreetMap contributors" and "© OpenMapTiles".
+      security: [{}, { ApiKeyAuth: [] }]
+      responses:
+        "200":
+          description: Style JSON v8.
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/Error401" }
+
+  /tiles/fonts/{fontstack}/{range}.pbf:
+    get:
+      tags: [tiles]
+      operationId: getGlyphs
+      summary: Glyph range (protobuf) for a font stack
+      security: [{}, { ApiKeyAuth: [] }]
+      parameters:
+        - { name: fontstack, in: path, required: true, schema: { type: string, example: Noto Sans Regular } }
+        - { name: range, in: path, required: true, schema: { type: string, pattern: "^[0-9]+-[0-9]+$", example: 0-255 } }
+      responses:
+        "200":
+          description: Glyph PBF.
+          content:
+            application/x-protobuf:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Error401" }
+        "404": { $ref: "#/components/responses/Error404" }
+
+  /tiles/sprites/{name}:
+    get:
+      tags: [tiles]
+      operationId: getSprite
+      summary: Sprite sheet (`osm-liberty.json`, `osm-liberty.png`, `osm-liberty@2x.json`, `osm-liberty@2x.png`)
+      security: [{}, { ApiKeyAuth: [] }]
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string, example: osm-liberty@2x.png } }
+      responses:
+        "200":
+          description: Sprite image or index.
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            application/json: { schema: { type: object } }
+        "401": { $ref: "#/components/responses/Error401" }
+        "404": { $ref: "#/components/responses/Error404" }
+
+  /tiles/preview.html:
+    get:
+      tags: [tiles]
+      operationId: getPreview
+      summary: Minimal MapLibre page that displays the map from `style.json`
+      security: [{}, { ApiKeyAuth: [] }]
+      responses:
+        "200":
+          description: HTML page.
+          content:
+            text/html: { schema: { type: string } }
+
+  /tiles/vendor/{file}:
+    get:
+      tags: [tiles]
+      operationId: getVendorFile
+      summary: MapLibre GL JS files used by the preview page (`maplibre-gl.js`, `maplibre-gl.css`)
+      security: [{}, { ApiKeyAuth: [] }]
+      parameters:
+        - { name: file, in: path, required: true, schema: { type: string, enum: [maplibre-gl.js, maplibre-gl.css] } }
+      responses:
+        "200":
+          description: The file.
+          content:
+            text/javascript: { schema: { type: string } }
+            text/css: { schema: { type: string } }
+        "404": { $ref: "#/components/responses/Error404" }
+
+  /healthz:
+    get:
+      tags: [ops]
+      operationId: healthz
+      summary: Liveness probe
+      description: Always `200` while the process runs; checks no dependency.
+      security: []
+      responses:
+        "200":
+          description: Alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /readyz:
+    get:
+      tags: [ops]
+      operationId: readyz
+      summary: Readiness probe
+      description: |
+        Checks every upstream (Photon, Nominatim, one OSRM per profile) and the
+        local tile archive. Redis is reported but never makes the service
+        unready (the gateway runs without cache).
+      security: []
+      responses:
+        "200":
+          description: All required upstreams are ok.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+        "503":
+          description: At least one required upstream is down.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    Query:
+      name: q
+      in: query
+      required: true
+      description: Free-text query, 1 to 200 characters.
+      schema: { type: string, minLength: 1, maxLength: 200 }
+      example: Байтерек
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of results (1 to `MAX_RESULTS_LIMIT`, default 5).
+      schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
+    Lang:
+      name: lang
+      in: query
+      description: Preferred language of names; one of `LANGUAGES` (default `ru,kk,en`, the first is the default).
+      schema: { type: string, examples: [ru] }
+
+  responses:
+    Places:
+      description: Matching places, best first. May be empty.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/PlacesResponse" }
+    Error400:
+      description: Validation error (`invalid_argument`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: invalid_argument, message: "lat: must be between -90 and 90" } }
+    Error401:
+      description: Missing or invalid API key (`unauthorized`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: unauthorized, message: "missing or invalid API key" } }
+    Error404:
+      description: Nothing found (`not_found`, `no_route`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: no_route, message: "no route between the given points" } }
+    Error429:
+      description: Rate limit exceeded (`rate_limited`).
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: rate_limited, message: "rate limit exceeded" } }
+    Error502:
+      description: An upstream is unavailable or returned garbage (`upstream_unavailable`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: upstream_unavailable, message: "routing service is unavailable" } }
+    Error504:
+      description: An upstream did not answer in time (`upstream_timeout`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: upstream_timeout, message: "routing service timed out" } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_argument
+                - unauthorized
+                - not_found
+                - no_route
+                - method_not_allowed
+                - rate_limited
+                - upstream_unavailable
+                - upstream_timeout
+                - internal
+            message: { type: string }
+
+    Address:
+      type: object
+      description: Structured address. Unknown parts are empty strings.
+      required: [street, house_number, district, city, postcode]
+      properties:
+        street: { type: string, example: проспект Тәуелсіздік }
+        house_number: { type: string, example: "14" }
+        district: { type: string, example: Есиль район }
+        city: { type: string, example: Астана }
+        postcode: { type: string, example: "010000" }
+
+    Place:
+      type: object
+      required: [id, name, address, lat, lon, type, source]
+      properties:
+        id:
+          type: string
+          description: Stable OSM identifier `<node|way|relation>/<osm id>`; `nominatim/<place_id>` when OSM data is missing.
+          example: node/1234567890
+        name: { type: string, description: "Name of the place; for plain addresses the street and number.", example: Бәйтерек }
+        address: { $ref: "#/components/schemas/Address" }
+        lat: { type: number, example: 51.1283 }
+        lon: { type: number, example: 71.4306 }
+        type: { type: string, description: "OSM value of the main tag (house, residential, cafe, ...).", example: tower }
+        source: { type: string, enum: [photon, nominatim] }
+
+    PlacesResponse:
+      type: object
+      required: [places]
+      properties:
+        places:
+          type: array
+          items: { $ref: "#/components/schemas/Place" }
+
+    GeoJSONLineString:
+      type: object
+      required: [type, coordinates]
+      properties:
+        type: { type: string, enum: [LineString] }
+        coordinates:
+          type: array
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items: { type: number }
+            description: "[lon, lat]"
+
+    Geometry:
+      description: |
+        Encoded polyline string (`geometry=polyline|polyline6`) or a GeoJSON
+        LineString (`geometry=geojson`).
+      oneOf:
+        - type: string
+        - $ref: "#/components/schemas/GeoJSONLineString"
+
+    Maneuver:
+      type: object
+      required: [type, lat, lon]
+      properties:
+        type: { type: string, description: "OSRM maneuver type (turn, depart, arrive, ...).", example: turn }
+        modifier: { type: string, description: "Direction (left, right, straight, ...).", example: left }
+        lat: { type: number }
+        lon: { type: number }
+
+    Step:
+      type: object
+      required: [distance_m, duration_s, name, maneuver, geometry]
+      properties:
+        distance_m: { type: number }
+        duration_s: { type: number }
+        name: { type: string, description: Street name, may be empty. }
+        maneuver: { $ref: "#/components/schemas/Maneuver" }
+        geometry: { $ref: "#/components/schemas/Geometry" }
+
+    Leg:
+      type: object
+      required: [distance_m, duration_s]
+      properties:
+        distance_m: { type: number }
+        duration_s: { type: number }
+        summary: { type: string }
+        steps:
+          type: array
+          description: Present only when `steps=true`.
+          items: { $ref: "#/components/schemas/Step" }
+
+    Route:
+      type: object
+      required: [distance_m, duration_s, geometry, legs]
+      properties:
+        distance_m: { type: number, example: 8421.7 }
+        duration_s: { type: number, example: 812.3 }
+        geometry: { $ref: "#/components/schemas/Geometry" }
+        legs:
+          type: array
+          items: { $ref: "#/components/schemas/Leg" }
+
+    Waypoint:
+      type: object
+      required: [name, lat, lon]
+      description: A requested point snapped onto the road network.
+      properties:
+        name: { type: string }
+        lat: { type: number }
+        lon: { type: number }
+
+    RouteResponse:
+      type: object
+      required: [routes, waypoints]
+      properties:
+        routes:
+          type: array
+          items: { $ref: "#/components/schemas/Route" }
+        waypoints:
+          type: array
+          items: { $ref: "#/components/schemas/Waypoint" }
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+        data_version: { type: string, example: 20261014T031500Z }
+        checks:
+          type: object
+          description: One entry per dependency (`photon`, `nominatim`, `osrm-car`, `osrm-foot`, `tiles`, `redis`).
+          additionalProperties:
+            type: object
+            required: [status]
+            properties:
+              status: { type: string, enum: [ok, down, disabled] }
+              latency_ms: { type: integer }
+              error: { type: string }
