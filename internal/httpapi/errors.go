@@ -20,6 +20,7 @@ import (
 const (
 	CodeInvalidArgument     = "invalid_argument"
 	CodeUnauthorized        = "unauthorized"
+	CodeForbidden           = "forbidden"
 	CodeNotFound            = "not_found"
 	CodeNoRoute             = "no_route"
 	CodeMethodNotAllowed    = "method_not_allowed"
@@ -35,6 +36,7 @@ type Error struct {
 	Code       string
 	Message    string
 	RetryAfter time.Duration // set for 429
+	Allow      string        // set for 405
 	Err        error         // underlying cause, logged but never sent
 }
 
@@ -55,6 +57,10 @@ func unauthorized() *Error {
 	return &Error{Status: http.StatusUnauthorized, Code: CodeUnauthorized, Message: "missing or invalid API key"}
 }
 
+func forbidden(format string, args ...any) *Error {
+	return &Error{Status: http.StatusForbidden, Code: CodeForbidden, Message: fmt.Sprintf(format, args...)}
+}
+
 func notFound(format string, args ...any) *Error {
 	return &Error{Status: http.StatusNotFound, Code: CodeNotFound, Message: fmt.Sprintf(format, args...)}
 }
@@ -63,8 +69,12 @@ func noRoute() *Error {
 	return &Error{Status: http.StatusNotFound, Code: CodeNoRoute, Message: "no route between the given points"}
 }
 
-func methodNotAllowed(allow string) *Error {
-	return &Error{Status: http.StatusMethodNotAllowed, Code: CodeMethodNotAllowed, Message: "method not allowed, use " + allow}
+func methodNotAllowed(method string) *Error {
+	allow := method + ", OPTIONS"
+	if method == http.MethodGet {
+		allow = "GET, HEAD, OPTIONS"
+	}
+	return &Error{Status: http.StatusMethodNotAllowed, Code: CodeMethodNotAllowed, Message: "method not allowed, use " + method, Allow: allow}
 }
 
 func rateLimited(retry time.Duration) *Error {
@@ -105,9 +115,9 @@ func writeError(w http.ResponseWriter, e *Error) {
 		secs := int((e.RetryAfter + time.Second - 1) / time.Second)
 		h.Set("Retry-After", strconv.Itoa(max(secs, 1)))
 	}
-	if e.Status == http.StatusMethodNotAllowed {
+	if e.Allow != "" {
 		// message carries the allowed method for humans; header for machines
-		h.Set("Allow", "GET, HEAD, OPTIONS")
+		h.Set("Allow", e.Allow)
 	}
 	w.WriteHeader(e.Status)
 	_, _ = w.Write(marshalJSON(errorBody{Error: errorDetail{Code: e.Code, Message: e.Message}}))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"map-service/internal/cache"
@@ -12,6 +13,7 @@ import (
 	"map-service/internal/clients/photon"
 	"map-service/internal/config"
 	"map-service/internal/geo"
+	"map-service/internal/styles"
 	"map-service/internal/tiles"
 )
 
@@ -72,6 +74,8 @@ type Server struct {
 
 	val     *validator
 	auth    *Authenticator
+	admin   *Authenticator
+	styles  *styles.Catalog
 	ipLim   *Limiter
 	keyLim  *Limiter
 	tileLim *Limiter
@@ -96,14 +100,20 @@ func New(d Deps) *Server {
 	s := &Server{
 		cfg: d.Cfg, log: d.Log, photon: d.Photon, nominatim: d.Nominatim, osrm: d.OSRM,
 		cache: store, tiles: d.Tiles, version: version, now: now,
-		val:     newValidator(d.Cfg),
-		auth:    NewAuthenticator(d.Cfg.APIKeys, d.Cfg.AuthDisabled),
+		val: newValidator(d.Cfg),
+		// Admin keys are valid client keys too, so one key works in the preview.
+		auth:    NewAuthenticator(append(append([]string{}, d.Cfg.APIKeys...), d.Cfg.AdminKeys...), d.Cfg.AuthDisabled),
+		admin:   NewAuthenticator(d.Cfg.AdminKeys, false),
+		styles:  styles.New(filepath.Join(d.Cfg.StaticDir, "styles"), d.Cfg.StateDir, d.Cfg.DefaultStyle),
 		ipLim:   NewLimiter(d.Cfg.LimitIP, now),
 		keyLim:  NewLimiter(d.Cfg.LimitKey, now),
 		tileLim: NewLimiter(d.Cfg.LimitTiles, now),
 		static:  newStaticFiles(d.Cfg),
 	}
 	s.ready = readyCache{ttl: time.Second, now: now}
+	if err := s.styles.Load(); err != nil && d.Log != nil {
+		d.Log.Warn("ignoring the saved default style", "err", err)
+	}
 	return s
 }
 
@@ -153,6 +163,9 @@ func (s *Server) Handler() http.Handler {
 	route(mux, "GET", "/v1/geocode", api(s.handleGeocode))
 	route(mux, "GET", "/v1/reverse", api(s.handleReverse))
 	route(mux, "GET", "/v1/route", api(s.handleRoute))
+	route(mux, "GET", "/v1/styles", api(s.handleStyles))
+	// Switching the default style: per-IP limit -> admin key.
+	route(mux, "PUT", "/v1/styles/default", chain(s.wrap(s.handleSetDefaultStyle), limitByIP(s.ipLim, ip), s.requireAdmin))
 
 	// /tiles/*: its own (much higher) per-IP bucket; the key is optional
 	// unless AUTH_REQUIRE_FOR_TILES is set.
@@ -164,6 +177,7 @@ func (s *Server) Handler() http.Handler {
 		return chain(s.wrap(h), mws...)
 	}
 	route(mux, "GET", "/tiles/style.json", assets(s.handleStyle))
+	route(mux, "GET", "/tiles/styles/{file}", assets(s.handleStyleByID))
 	route(mux, "GET", "/tiles/preview.html", assets(s.handlePreview))
 	route(mux, "GET", "/tiles/fonts/{fontstack}/{file}", assets(s.handleFont))
 	route(mux, "GET", "/tiles/sprites/{name}", assets(s.handleSprite))

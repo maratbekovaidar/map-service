@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"map-service/internal/geo"
+	"map-service/internal/styles"
 )
 
 // Getenv abstracts os.Getenv so tests can inject values.
@@ -59,10 +60,13 @@ type Gateway struct {
 	PublicBaseURL  string
 	DataRoot       string
 	StaticDir      string
+	StateDir       string        // writable runtime state (the chosen default style); "" = memory only
+	DefaultStyle   string        // style served at /tiles/style.json until an admin picks another
 	DataVersionTTL time.Duration // how often the live data version is re-read
 	TilesMaxAge    time.Duration // Cache-Control max-age of tiles
 
 	APIKeys             []string
+	AdminKeys           []string // may also switch the default style; valid for /v1 too
 	AuthDisabled        bool
 	AuthRequireForTiles bool
 	CORSOrigins         []string
@@ -262,9 +266,15 @@ func LoadGateway(get Getenv) (*Gateway, error) {
 	g.PublicBaseURL = strings.TrimRight(l.str("PUBLIC_BASE_URL", ""), "/")
 	g.DataRoot = l.str("DATA_ROOT", "/data")
 	g.StaticDir = l.str("STATIC_DIR", "/app/static")
+	g.StateDir = l.str("STATE_DIR", "")
+	g.DefaultStyle = l.str("DEFAULT_STYLE", "liberty")
+	if !styles.ValidID(g.DefaultStyle) {
+		l.fail("DEFAULT_STYLE=%q: want a style id like liberty or 2gis-like (lowercase letters, digits, '-')", g.DefaultStyle)
+	}
 	g.DataVersionTTL = l.dur("DATA_VERSION_POLL", 10*time.Second)
 
 	g.APIKeys = l.list("API_KEYS", "")
+	g.AdminKeys = l.list("ADMIN_API_KEYS", "")
 	g.AuthDisabled = l.bool("AUTH_DISABLED", false)
 	if len(g.APIKeys) == 0 && !g.AuthDisabled {
 		l.fail("API_KEYS is empty: set at least one key (or AUTH_DISABLED=true for local development only)")

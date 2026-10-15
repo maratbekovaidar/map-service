@@ -1,0 +1,369 @@
+{
+  "id": "2gis-like",
+  "base": "liberty",
+  "name": "2GIS-like",
+  "description": "Warm cream land, orange arterials, grey-outlined white streets and brown district labels after the default 2GIS theme.",
+  "derived-from": "Own colour scheme modelled on the palette of the default 2GIS (2gis.com) theme; no 2GIS icons, fonts or code are used",
+  "notes": [
+    "Colours were taken from the default 2GIS MapGL theme (styles.2gis.com export) and mapped from 2GIS's road/area classes to OpenMapTiles ones:",
+    "2GIS Federal -> motorway, Magistral -> trunk/primary (+ links), Main -> secondary/tertiary, Other -> minor, Internal -> service/track.",
+    "Liberty's POI icons (Maki) stay; POI label colours follow 2GIS's five category colours (red health, orange food, yellow leisure/lodging, green shops/nature, blue services).",
+    "Edit a value, run `make style-assets` and reload the preview (?style=2gis-like). A null paint/layout value removes the property."
+  ],
+  "layers": {
+    "background": {
+      "note": "2GIS Country/Region area",
+      "paint": {"background-color": ["interpolate", ["linear"], ["zoom"], 0, "#FFFCF0", 9, "#F5F0D6", 12, "#F1EEE0", 14, "#F4F1E1", 16, "#F7F6E8"]}
+    },
+    "park": {
+      "note": "2GIS Vegetation feature (Forest_quarter)",
+      "paint": {
+        "fill-color": ["interpolate", ["linear"], ["zoom"], 10, "#CCE39D", 12, "#C7E295", 15, "#C0DD8A", 17, "#BCDD86"],
+        "fill-opacity": null,
+        "fill-outline-color": "hsl(83, 56%, 68%)"
+      }
+    },
+    "park_outline": {
+      "paint": {
+        "line-color": "hsl(83, 56%, 68%)",
+        "line-dasharray": null,
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 13.9, 0, 14, 1]
+      }
+    },
+    "landuse_residential": {
+      "note": "2GIS Residential (Dwelling_quarter); Liberty shows it only below z8, 2GIS at every zoom",
+      "maxzoom": 24,
+      "paint": {"fill-color": ["interpolate", ["linear"], ["zoom"], 1, "#F2EDD4", 12, "#EBE9D5", 15, "#EEECDD", 17, "#EDECDF"]}
+    },
+    "landcover_wood": {
+      "note": "2GIS Forest",
+      "paint": {
+        "fill-color": ["interpolate", ["linear"], ["zoom"], 3.2, "#E0EEB6", 10, "#CCE39D", 12, "#C7E295", 15, "#C0DD8A", 17, "#BCDD86"],
+        "fill-opacity": null
+      }
+    },
+    "landcover_grass": {
+      "note": "2GIS Flowerbed / lawns",
+      "paint": {
+        "fill-color": ["interpolate", ["linear"], ["zoom"], 12, "#C7E295", 15, "#CDE5A5", 17, "#D3EDAF"],
+        "fill-opacity": 0.8
+      }
+    },
+    "landcover_sand": {"paint": {"fill-color": "#F8F4E3"}},
+    "landuse_cemetery": {"note": "2GIS Cemetery", "paint": {"fill-color": "#D8E0BD"}},
+    "landuse_pitch": {"paint": {"fill-color": "#D3EDAF"}},
+    "landuse_track": {"paint": {"fill-color": "#E6E3D7"}},
+    "landuse_hospital": {
+      "note": "2GIS Area_of_interest tint",
+      "paint": {"fill-color": ["interpolate", ["linear"], ["zoom"], 11, "rgba(241,227,153,0.25)", 14, "rgba(245,230,159,0.35)", 16, "rgba(236,230,163,0.25)"]}
+    },
+    "landuse_school": {
+      "note": "2GIS Area_of_interest tint",
+      "paint": {"fill-color": ["interpolate", ["linear"], ["zoom"], 11, "rgba(241,227,153,0.25)", 14, "rgba(245,230,159,0.35)", 16, "rgba(236,230,163,0.25)"]}
+    },
+    "water": {
+      "note": "2GIS Water / River polygons",
+      "paint": {"fill-color": ["interpolate", ["linear"], ["zoom"], 10, "#A4D8EB", 12, "#9ED3F0", 15, "#92D1F0"]}
+    },
+    "waterway_river": {"note": "2GIS River, line", "paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 10, "#62AED8", 12, "#70BDE8", 15, "#92D1F0"]}},
+    "waterway_other": {"paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 10, "#62AED8", 12, "#70BDE8", 15, "#92D1F0"]}},
+    "waterway_tunnel": {"paint": {"line-color": "#92D1F0"}},
+    "aeroway_fill": {"note": "2GIS Industrial area", "paint": {"fill-color": "#E9E8DD"}},
+    "aeroway_runway": {"note": "2GIS Runway", "paint": {"line-color": "#FFFFFF"}},
+    "aeroway_taxiway": {"paint": {"line-color": "#FFFFFF"}},
+
+    "road_motorway_casing": {
+      "note": "2GIS Federal outline",
+      "paint": {
+        "line-color": ["interpolate", ["linear"], ["zoom"], 10, "#F5A22E", 12, "#F29B21", 15, "#BF6F0D"],
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 5, 0.7, 9, 2.8, 14, 5.5, 19, 25, 20, 27]
+      }
+    },
+    "road_motorway": {
+      "note": "2GIS Federal",
+      "paint": {
+        "line-color": ["interpolate", ["linear"], ["zoom"], 5, "#FAAC38", 10, "#F5A22E", 12, "#F29B21", 15, "#EE9211"],
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 5, 0.5, 9, 2, 14, 4, 19, 22, 20, 24]
+      }
+    },
+    "road_motorway_link_casing": {"paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 10, "#F5A22E", 12, "#F29B21", 15, "#BF6F0D"]}},
+    "road_motorway_link": {"paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 10, "#F5A22E", 12, "#F29B21", 15, "#EE9211"]}},
+    "road_trunk_primary_casing": {
+      "note": "2GIS Magistral background",
+      "paint": {
+        "line-color": ["interpolate", ["linear"], ["zoom"], 9, "#F5A22E", 12, "#ED9B35", 14.5, "#E19D48"],
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 5, 0.5, 9, 1.2, 14, 4, 16, 8, 20, 20]
+      }
+    },
+    "road_trunk_primary": {
+      "note": "2GIS Magistral",
+      "paint": {
+        "line-color": ["interpolate", ["linear"], ["zoom"], 5, "#F7AD48", 9.1, "#FFB046", 12, "#FBCC6F", 15, "#FFDFA0"],
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 5, 0.5, 9, 1, 14, 3, 16, 6.2, 20, 18.5]
+      }
+    },
+    "road_link_casing": {"paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 9, "#F5A22E", 12, "#ED9B35", 14.5, "#E19D48"]}},
+    "road_link": {"paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 9.1, "#FFB046", 12, "#FBCC6F", 15, "#FFDFA0"]}},
+    "road_secondary_tertiary_casing": {
+      "note": "2GIS Main background: below z13 only a thin grey line is drawn",
+      "paint": {
+        "line-color": ["interpolate", ["linear"], ["zoom"], 11, "#A4A4A4", 13, "#B6B6B6"],
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, 0.3, 11, 0.5, 13, 3.5, 19, 17, 20, 18]
+      }
+    },
+    "road_secondary_tertiary": {
+      "note": "2GIS Main",
+      "paint": {
+        "line-color": "#FFFFFF",
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 12.5, 0, 13, 2.5, 19, 15, 20, 16]
+      }
+    },
+    "road_minor_casing": {
+      "note": "2GIS Other background",
+      "paint": {
+        "line-color": "#A4A4A4",
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 12, 0.2, 13, 0.4, 14, 2.6, 19, 17, 20, 18]
+      }
+    },
+    "road_minor": {
+      "note": "2GIS Other",
+      "paint": {
+        "line-color": "#FFFFFF",
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 13.5, 0, 14, 1.8, 19, 15, 20, 16]
+      }
+    },
+    "road_service_track_casing": {
+      "note": "2GIS Internal background",
+      "paint": {
+        "line-color": "#B6B6B6",
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 14.5, 0.2, 15.5, 0.6, 16, 3, 18, 8.5, 20, 11.5]
+      }
+    },
+    "road_service_track": {
+      "note": "2GIS Internal",
+      "paint": {
+        "line-color": "#FFFFFF",
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 15.5, 0, 16, 2, 18, 7, 20, 10]
+      }
+    },
+    "road_path_pedestrian": {
+      "note": "2GIS park footpath: green dashes; pedestrian streets get their own layers (inserted below)",
+      "filter": ["all", ["==", "$type", "LineString"], ["!in", "brunnel", "bridge", "tunnel"], ["==", "class", "path"]],
+      "paint": {
+        "line-color": ["interpolate", ["linear"], ["zoom"], 14, "rgba(94,156,77,0.6)", 18, "#5E9C4D"],
+        "line-dasharray": [2, 1.5],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.6, 17, 1.2, 20, 2]
+      }
+    },
+    "road_major_rail": {
+      "note": "2GIS Railway line",
+      "paint": {"line-color": "#8C99A9", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 13.5, 1, 20, 2.5]}
+    },
+    "road_major_rail_hatching": {"paint": {"line-color": "#8C99A9"}},
+    "road_transit_rail": {"paint": {"line-color": "#8C99A9"}},
+    "road_transit_rail_hatching": {"paint": {"line-color": "#8C99A9"}},
+
+    "bridge_motorway_casing": {"paint": {"line-color": "#BF6F0D"}},
+    "bridge_motorway": {"paint": {"line-color": "#EE9211"}},
+    "bridge_motorway_link_casing": {"paint": {"line-color": "#BF6F0D"}},
+    "bridge_motorway_link": {"paint": {"line-color": "#EE9211"}},
+    "bridge_trunk_primary_casing": {"paint": {"line-color": "#E19D48"}},
+    "bridge_trunk_primary": {"paint": {"line-color": "#FFDFA0"}},
+    "bridge_link_casing": {"paint": {"line-color": "#E19D48"}},
+    "bridge_link": {"paint": {"line-color": "#FFDFA0"}},
+    "bridge_secondary_tertiary_casing": {"paint": {"line-color": "#A4A4A4"}},
+    "bridge_secondary_tertiary": {"paint": {"line-color": "#FFFFFF"}},
+    "bridge_street_casing": {"paint": {"line-color": "#A4A4A4"}},
+    "bridge_street": {"paint": {"line-color": "#FFFFFF"}},
+    "bridge_service_track_casing": {"paint": {"line-color": "#B6B6B6"}},
+    "bridge_service_track": {"paint": {"line-color": "#FFFFFF"}},
+    "bridge_path_pedestrian_casing": {"paint": {"line-color": "#A8B5A0"}},
+    "bridge_path_pedestrian": {"paint": {"line-color": "#F8FCEF"}},
+    "bridge_major_rail": {"paint": {"line-color": "#8C99A9"}},
+    "bridge_major_rail_hatching": {"paint": {"line-color": "#8C99A9"}},
+    "bridge_transit_rail": {"paint": {"line-color": "#8C99A9"}},
+    "bridge_transit_rail_hatching": {"paint": {"line-color": "#8C99A9"}},
+
+    "tunnel_motorway_casing": {"paint": {"line-color": "#E3A75C"}},
+    "tunnel_motorway": {"paint": {"line-color": "#FFD9A3"}},
+    "tunnel_motorway_link_casing": {"paint": {"line-color": "#E3A75C"}},
+    "tunnel_motorway_link": {"paint": {"line-color": "#FFD9A3"}},
+    "tunnel_trunk_primary_casing": {"paint": {"line-color": "#EBBE84"}},
+    "tunnel_trunk_primary": {"paint": {"line-color": "#FFEBC7"}},
+    "tunnel_link_casing": {"paint": {"line-color": "#EBBE84"}},
+    "tunnel_link": {"paint": {"line-color": "#FFEBC7"}},
+    "tunnel_secondary_tertiary_casing": {"paint": {"line-color": "#C9C9C9"}},
+    "tunnel_secondary_tertiary": {"paint": {"line-color": "#F7F7F2"}},
+    "tunnel_street_casing": {"paint": {"line-color": "#C9C9C9"}},
+    "tunnel_minor": {"paint": {"line-color": "#F7F7F2"}},
+    "tunnel_service_track_casing": {"paint": {"line-color": "#CFCFCF"}},
+    "tunnel_service_track": {"paint": {"line-color": "#F7F7F2"}},
+    "tunnel_major_rail": {"paint": {"line-color": "#B5BEC9"}},
+    "tunnel_major_rail_hatching": {"paint": {"line-color": "#B5BEC9"}},
+    "tunnel_transit_rail": {"paint": {"line-color": "#B5BEC9"}},
+    "tunnel_transit_rail_hatching": {"paint": {"line-color": "#B5BEC9"}},
+
+    "building": {
+      "note": "2GIS flat buildings (z14-16): light fill, darker outline",
+      "maxzoom": 16,
+      "paint": {
+        "fill-color": ["interpolate", ["linear"], ["zoom"], 13, "#F3F0E3", 14.3, "#FAF8E8", 14.7, "#FFFDED", 16, "#FCFBED"],
+        "fill-outline-color": ["interpolate", ["linear"], ["zoom"], 13, "rgba(201,195,180,0.3)", 14.5, "#DCDAD3", 16, "#C9C3B4"]
+      }
+    },
+    "building-3d": {
+      "note": "2GIS Building 3D from z16 (roof #FCFBED, the renderer shades the walls)",
+      "minzoom": 16,
+      "paint": {"fill-extrusion-color": "#F7F4E6", "fill-extrusion-opacity": 0.9}
+    },
+    "boundary_3": {"paint": {"line-color": "#B9B6A5"}},
+    "boundary_2_z0-4": {"paint": {"line-color": "#AAAAAA"}},
+    "boundary_2_z5-": {"paint": {"line-color": "#AAAAAA"}},
+
+    "water_name_line": {
+      "note": "2GIS River labels",
+      "layout": {"text-font": ["Noto Sans Italic"]},
+      "paint": {"text-color": "#226E99", "text-halo-color": "rgba(255,255,255,0.5)"}
+    },
+    "water_name_point": {
+      "layout": {"text-font": ["Noto Sans Italic"]},
+      "paint": {"text-color": "#226E99", "text-halo-color": "rgba(255,255,255,0.5)"}
+    },
+    "poi_z16": {
+      "note": "2GIS POI captions: category colour, regular font",
+      "layout": {"text-font": ["Noto Sans Regular"], "text-size": 11},
+      "paint": {
+        "text-color": ["match", ["get", "class"],
+          ["hospital", "clinic", "doctors", "dentist", "pharmacy", "veterinary", "nursing_home"], "#BA4836",
+          ["restaurant", "fast_food", "cafe", "bar", "pub", "biergarten", "ice_cream", "nightclub"], "#CA6602",
+          ["lodging", "attraction", "museum", "theatre", "cinema", "arts_centre", "gallery", "zoo", "stadium", "sports_centre", "swimming_pool", "fuel"], "#DE9400",
+          ["shop", "grocery", "park", "garden", "playground", "dog_park", "campsite", "golf"], "#4C8A0A",
+          ["bank", "atm", "post_office", "library", "school", "kindergarten", "college", "town_hall", "police", "fire_station", "laundry", "office"], "#1482BD",
+          "#5E5A54"],
+        "text-halo-color": "#FFFFFF",
+        "text-halo-width": 0.85,
+        "text-halo-blur": null
+      }
+    },
+    "poi_z15": {
+      "layout": {"text-font": ["Noto Sans Regular"], "text-size": 11},
+      "paint": {
+        "text-color": ["match", ["get", "class"],
+          ["hospital", "clinic", "doctors", "dentist", "pharmacy", "veterinary", "nursing_home"], "#BA4836",
+          ["restaurant", "fast_food", "cafe", "bar", "pub", "biergarten", "ice_cream", "nightclub"], "#CA6602",
+          ["lodging", "attraction", "museum", "theatre", "cinema", "arts_centre", "gallery", "zoo", "stadium", "sports_centre", "swimming_pool", "fuel"], "#DE9400",
+          ["shop", "grocery", "park", "garden", "playground", "dog_park", "campsite", "golf"], "#4C8A0A",
+          ["bank", "atm", "post_office", "library", "school", "kindergarten", "college", "town_hall", "police", "fire_station", "laundry", "office"], "#1482BD",
+          "#5E5A54"],
+        "text-halo-color": "#FFFFFF",
+        "text-halo-width": 0.85,
+        "text-halo-blur": null
+      }
+    },
+    "poi_z14": {
+      "layout": {"text-font": ["Noto Sans Regular"], "text-size": 11},
+      "paint": {
+        "text-color": ["match", ["get", "class"],
+          ["hospital", "clinic", "doctors", "dentist", "pharmacy", "veterinary", "nursing_home"], "#BA4836",
+          ["restaurant", "fast_food", "cafe", "bar", "pub", "biergarten", "ice_cream", "nightclub"], "#CA6602",
+          ["lodging", "attraction", "museum", "theatre", "cinema", "arts_centre", "gallery", "zoo", "stadium", "sports_centre", "swimming_pool", "fuel"], "#DE9400",
+          ["shop", "grocery", "park", "garden", "playground", "dog_park", "campsite", "golf"], "#4C8A0A",
+          ["bank", "atm", "post_office", "library", "school", "kindergarten", "college", "town_hall", "police", "fire_station", "laundry", "office"], "#1482BD",
+          "#5E5A54"],
+        "text-halo-color": "#FFFFFF",
+        "text-halo-width": 0.85,
+        "text-halo-blur": null
+      }
+    },
+    "poi_transit": {"paint": {"text-color": "#1482BD"}},
+    "road_label": {
+      "note": "2GIS Street labels (Main labels)",
+      "layout": {"text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 15, 11.5, 19, 14]},
+      "paint": {"text-color": "#3F3F3F", "text-halo-color": "rgba(255,255,255,0.7)", "text-halo-width": 1, "text-halo-blur": null}
+    },
+    "place_other": {
+      "note": "2GIS District label: translucent brown, sentence case",
+      "layout": {
+        "text-font": ["Noto Sans Regular"],
+        "text-transform": null,
+        "text-letter-spacing": null,
+        "text-size": ["interpolate", ["linear"], ["zoom"], 11, 12, 16, 18]
+      },
+      "paint": {"text-color": "rgba(79,58,23,0.55)", "text-halo-color": "rgba(255,255,255,0.5)", "text-halo-width": 1}
+    },
+    "place_village": {"paint": {"text-color": "#3F3F3F", "text-halo-color": "rgba(255,255,255,0.5)", "text-halo-width": 1}},
+    "place_town": {"paint": {"text-color": "#2D2D2D", "text-halo-color": "rgba(255,255,255,0.5)", "text-halo-width": 1}},
+    "place_city": {
+      "note": "2GIS Capital city label (Semibold -> our Bold)",
+      "paint": {"text-color": "#404040", "text-halo-color": "rgba(255,255,255,0.7)", "text-halo-width": 1}
+    },
+    "state": {"paint": {"text-color": "#4F3A17"}},
+    "country_1": {"paint": {"text-color": "#404040"}},
+    "country_2": {"paint": {"text-color": "#404040"}},
+    "country_3": {"paint": {"text-color": "#404040"}}
+  },
+  "insert": [
+    {
+      "note": "2GIS Industrial area (Garage_quarter, Technical_quarter); Liberty has no industrial fill",
+      "before": "landcover_wood",
+      "layer": {
+        "id": "landuse_industrial",
+        "type": "fill",
+        "source": "openmaptiles",
+        "source-layer": "landuse",
+        "filter": ["match", ["get", "class"], ["industrial", "garages", "railway", "quarry"], true, false],
+        "paint": {"fill-color": ["interpolate", ["linear"], ["zoom"], 9, "#EFEFE1", 12, "#E9E8DD", 16, "#E9E9E2"]}
+      }
+    },
+    {
+      "note": "2GIS Pedestrian street background",
+      "before": "road_path_pedestrian",
+      "layer": {
+        "id": "road_pedestrian_casing",
+        "type": "line",
+        "source": "openmaptiles",
+        "source-layer": "transportation",
+        "minzoom": 14,
+        "filter": ["all", ["==", ["geometry-type"], "LineString"], ["!", ["match", ["get", "brunnel"], ["bridge", "tunnel"], true, false]], ["==", ["get", "class"], "pedestrian"]],
+        "layout": {"line-cap": "round", "line-join": "round"},
+        "paint": {"line-color": "#A8B5A0", "line-width": ["interpolate", ["exponential", 2], ["zoom"], 14, 1.5, 15, 5, 19, 16.5, 20, 16.5]}
+      }
+    },
+    {
+      "note": "2GIS Pedestrian street",
+      "before": "road_path_pedestrian",
+      "layer": {
+        "id": "road_pedestrian",
+        "type": "line",
+        "source": "openmaptiles",
+        "source-layer": "transportation",
+        "minzoom": 14,
+        "filter": ["all", ["==", ["geometry-type"], "LineString"], ["!", ["match", ["get", "brunnel"], ["bridge", "tunnel"], true, false]], ["==", ["get", "class"], "pedestrian"]],
+        "layout": {"line-cap": "round", "line-join": "round"},
+        "paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 14, "#EDF5DC", 16, "#F8FCEF"], "line-width": ["interpolate", ["exponential", 2], ["zoom"], 14, 1, 15, 4, 19, 14, 20, 14]}
+      }
+    },
+    {
+      "note": "2GIS House numbers: shown from z16, under every other label",
+      "before": "water_name_line",
+      "layer": {
+        "id": "housenumber",
+        "type": "symbol",
+        "source": "openmaptiles",
+        "source-layer": "housenumber",
+        "minzoom": 16,
+        "layout": {
+          "text-field": ["to-string", ["get", "housenumber"]],
+          "text-font": ["Noto Sans Regular"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 16, 10, 20, 15],
+          "text-padding": 2
+        },
+        "paint": {
+          "text-color": ["interpolate", ["linear"], ["zoom"], 16, "#7B7770", 20, "#626256"],
+          "text-halo-color": "rgba(255,255,255,0.7)",
+          "text-halo-width": 0.9
+        }
+      }
+    }
+  ]
+}

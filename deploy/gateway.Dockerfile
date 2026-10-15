@@ -10,10 +10,11 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 
 FROM alpine:3.24.2
 RUN apk add --no-cache ca-certificates tzdata \
- && adduser -D -u 10001 app
+ && adduser -D -u 10001 app \
+ && mkdir -p /state && chown app:app /state
 COPY --from=build /out/gateway /usr/local/bin/gateway
 # Style, glyphs and sprites are served as static files by the gateway.
-COPY deploy/tiles/style.json /app/static/style.json
+COPY deploy/tiles/styles /app/static/styles
 COPY deploy/tiles/preview.html /app/static/preview.html
 COPY deploy/tiles/fonts /app/static/fonts
 COPY deploy/tiles/sprites /app/static/sprites

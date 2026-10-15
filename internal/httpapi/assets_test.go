@@ -206,7 +206,7 @@ const styleTemplate = `{"version":8,"sources":{"omt":{"type":"vector","tiles":["
 
 func TestStyleUsesPublicBaseURL(t *testing.T) {
 	hs := newHarness(t, nil, nil)
-	writeFile(t, filepath.Join(hs.static, "style.json"), []byte(styleTemplate))
+	writeFile(t, filepath.Join(hs.static, "styles", "liberty.json"), []byte(styleTemplate))
 	rec := hs.do("GET", "/tiles/style.json")
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -231,7 +231,7 @@ func TestStyleUsesPublicBaseURL(t *testing.T) {
 
 func TestStyleBaseURLDerivedFromRequestWhenNotConfigured(t *testing.T) {
 	hs := newHarness(t, map[string]string{"PUBLIC_BASE_URL": ""}, nil)
-	writeFile(t, filepath.Join(hs.static, "style.json"), []byte(styleTemplate))
+	writeFile(t, filepath.Join(hs.static, "styles", "liberty.json"), []byte(styleTemplate))
 	get := func(remote string, headers map[string]string, host string) string {
 		req := httptest.NewRequest("GET", "/tiles/style.json", nil)
 		req.RemoteAddr = remote

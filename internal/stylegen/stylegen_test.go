@@ -46,6 +46,11 @@ const miniLiberty = `{
 
 func testOptions() Options {
 	return Options{
+		ID:          "liberty",
+		Name:        "OSM Liberty",
+		Description: "test",
+		DerivedFrom: "OSM Liberty",
+		Sprite:      "osm-liberty",
 		Languages:   []string{"ru", "kk", "en"},
 		TileMaxZoom: 14,
 		Center:      [2]float64{71.4306, 51.1283},
@@ -143,7 +148,9 @@ func TestTransformLabelsUseTheFirstLanguageWithFallback(t *testing.T) {
 			}
 		}
 	}
-	kk := transform(t, miniLiberty, Options{Languages: []string{"kk", "ru"}, FontMap: testOptions().FontMap, TileMaxZoom: 14})
+	kkOpt := testOptions()
+	kkOpt.Languages = []string{"kk", "ru"}
+	kk := transform(t, miniLiberty, kkOpt)
 	b, _ := json.Marshal(kk["layers"].([]any)[2].(map[string]any)["layout"].(map[string]any)["text-field"])
 	if string(b) != `["coalesce",["get","name:kk"],["get","name:latin"]]` {
 		t.Errorf("kk labels: %s", b)
@@ -158,7 +165,7 @@ func TestTransformGuardsAgainstUpstreamChanges(t *testing.T) {
 	}
 	cases := map[string]string{
 		"unmapped font":           mk(`{"id":"x","type":"symbol","source":"openmaptiles","layout":{"text-font":["Comic Sans"]}}`),
-		"mixed name field":        mk(`{"id":"x","type":"symbol","source":"openmaptiles","layout":{"text-field":"{name}\n{name:nonlatin}"}}`),
+		"unknown text field":      mk(`{"id":"x","type":"symbol","source":"openmaptiles","layout":{"text-field":"{class}"}}`),
 		"external url in a layer": mk(`{"id":"x","type":"fill","source":"openmaptiles","paint":{"fill-pattern":"https://cdn.example.com/p.png"}}`),
 	}
 	for name, in := range cases {
@@ -172,8 +179,13 @@ func TestTransformGuardsAgainstUpstreamChanges(t *testing.T) {
 	if _, err := Transform([]byte(`not json`), opt); err == nil {
 		t.Error("invalid JSON must be rejected")
 	}
-	if _, err := Transform([]byte(miniLiberty), Options{FontMap: opt.FontMap}); err == nil {
+	if _, err := Transform([]byte(miniLiberty), Options{ID: "x", FontMap: opt.FontMap}); err == nil {
 		t.Error("languages are required")
+	}
+	bad := testOptions()
+	bad.ID = "../x"
+	if _, err := Transform([]byte(miniLiberty), bad); err == nil {
+		t.Error("the style id becomes a file name and must be validated")
 	}
 	// The licence link in metadata is data, not a fetched URL.
 	if _, err := Transform([]byte(miniLiberty), opt); err != nil {
@@ -315,7 +327,10 @@ func TestFetchVerifiesAndCaches(t *testing.T) {
 }
 
 func TestPinsAreRealHashes(t *testing.T) {
-	all := append(LibertyFiles(), NotoGlyphs(), NotoLicense())
+	all := []Source{NotoGlyphs(), NotoLicense()}
+	for _, b := range BaseStyles() {
+		all = append(all, b.Sources()...)
+	}
 	all = append(all, MapLibreFiles()...)
 	all = append(all, SwaggerUIFiles()...)
 	all = append(all, SwaggerUILicenses()...)

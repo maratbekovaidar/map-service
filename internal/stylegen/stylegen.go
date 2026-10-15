@@ -1,6 +1,8 @@
 // Package stylegen builds the map style assets served by the gateway from
-// pinned upstream sources: the OSM Liberty style (rewired to this service's
-// tiles, glyphs and sprites), Noto Sans glyph ranges and the sprite sheets.
+// pinned upstream sources: the base styles (OSM Liberty, Positron, Dark
+// Matter, rewired to this service's tiles, glyphs and sprites), the themes
+// derived from them (themes/*.json), Noto Sans glyph ranges and the sprite
+// sheets.
 //
 // The transformations are pure functions so they can be unit-tested; the
 // network side lives in fetch.go.
@@ -17,6 +19,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"map-service/internal/styles"
 )
 
 // PlaceholderBaseURL is replaced by the gateway with PUBLIC_BASE_URL at request time.
@@ -27,8 +31,27 @@ const PlaceholderBaseURL = "{{PUBLIC_BASE_URL}}"
 const Attribution = `<a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a> ` +
 	`<a href="https://openmaptiles.org/" target="_blank">&copy; OpenMapTiles</a>`
 
+// Metadata keys written into every generated style. The gateway's style
+// catalogue (GET /v1/styles) reads the name and these.
+const (
+	MetaStyleID     = "map-service:style-id"
+	MetaDescription = "map-service:description"
+	MetaDerivedFrom = "map-service:derived-from"
+	MetaLanguages   = "map-service:languages"
+)
+
 // Options controls Transform.
 type Options struct {
+	// ID, Name and Description identify the style in the catalogue;
+	// DerivedFrom is the credit of the upstream design and code.
+	ID          string
+	Name        string
+	Description string
+	DerivedFrom string
+	// Sprite is the sprite sheet name under /tiles/sprites/ ("" = none).
+	Sprite string
+	// ExtraAttribution is appended to Attribution (design credit).
+	ExtraAttribution string
 	// Languages in priority order (LANGUAGES); labels use the first one and
 	// fall back to the default OSM name.
 	Languages []string
@@ -49,30 +72,44 @@ func NameExpression(lang string) []any {
 	return []any{"coalesce", []any{"get", "name:" + lang}, []any{"get", "name:latin"}}
 }
 
-// Transform rewires an OSM Liberty style.json to this service.
+// Transform rewires an upstream OpenMapTiles-schema style.json (OSM Liberty,
+// Positron, Dark Matter) to this service.
 func Transform(raw []byte, opt Options) ([]byte, error) {
 	if len(opt.Languages) == 0 {
 		return nil, fmt.Errorf("stylegen: at least one language is required")
+	}
+	if !ValidID(opt.ID) {
+		return nil, fmt.Errorf("stylegen: invalid style id %q", opt.ID)
 	}
 	var style map[string]any
 	if err := json.Unmarshal(raw, &style); err != nil {
 		return nil, fmt.Errorf("stylegen: parse style: %w", err)
 	}
 
-	style["name"] = "OSM Liberty (map-service)"
+	style["name"] = opt.Name
 	style["metadata"] = map[string]any{
-		"map-service:derived-from": "OSM Liberty (maputnik/osm-liberty), BSD licence; design CC-BY 3.0 (Mapbox OSM Bright); data schema OpenMapTiles CC-BY 4.0",
-		"map-service:languages":    opt.Languages,
+		MetaStyleID:     opt.ID,
+		MetaDescription: opt.Description,
+		MetaDerivedFrom: opt.DerivedFrom,
+		MetaLanguages:   opt.Languages,
 	}
 	style["center"] = []any{opt.Center[0], opt.Center[1]}
 	style["zoom"] = opt.Zoom
-	style["sprite"] = PlaceholderBaseURL + "/tiles/sprites/osm-liberty"
+	if opt.Sprite != "" {
+		style["sprite"] = PlaceholderBaseURL + "/tiles/sprites/" + opt.Sprite
+	} else {
+		delete(style, "sprite")
+	}
 	style["glyphs"] = PlaceholderBaseURL + "/tiles/fonts/{fontstack}/{range}.pbf"
 
 	// Sources: keep only the vector source, pointed at the gateway.
 	sources, _ := style["sources"].(map[string]any)
 	if sources == nil || sources["openmaptiles"] == nil {
 		return nil, fmt.Errorf("stylegen: upstream style has no 'openmaptiles' source")
+	}
+	attribution := Attribution
+	if opt.ExtraAttribution != "" {
+		attribution += " " + opt.ExtraAttribution
 	}
 	removed := map[string]bool{}
 	for name := range sources {
@@ -86,7 +123,7 @@ func Transform(raw []byte, opt Options) ([]byte, error) {
 			"tiles":       []any{PlaceholderBaseURL + "/tiles/{z}/{x}/{y}.mvt"},
 			"minzoom":     0,
 			"maxzoom":     opt.TileMaxZoom,
-			"attribution": Attribution,
+			"attribution": attribution,
 		},
 	}
 
@@ -107,6 +144,10 @@ func Transform(raw []byte, opt Options) ([]byte, error) {
 	}
 	style["layers"] = kept
 
+	return encodeStyle(style)
+}
+
+func encodeStyle(style map[string]any) ([]byte, error) {
 	if err := checkNoExternalURLs(style); err != nil {
 		return nil, err
 	}
@@ -117,30 +158,78 @@ func Transform(raw []byte, opt Options) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
+// ValidID reports whether id can name a style (the gateway's rule).
+func ValidID(id string) bool { return styles.ValidID(id) }
+
 func rewriteLayer(layer map[string]any, opt Options) error {
 	layout, _ := layer["layout"].(map[string]any)
 	if layout == nil {
 		return nil
 	}
 	if fonts, ok := layout["text-font"].([]any); ok {
-		for i, f := range fonts {
+		// Upstream stacks like ["Metropolis Regular", "Noto Sans Regular"]
+		// collapse to one font: a duplicate would make the glyph URL a
+		// comma-separated stack the gateway does not serve.
+		out := make([]any, 0, len(fonts))
+		seen := map[string]bool{}
+		for _, f := range fonts {
 			name, _ := f.(string)
 			to, ok := opt.FontMap[name]
 			if !ok {
 				return fmt.Errorf("font %q has no replacement in FontMap", name)
 			}
-			fonts[i] = to
+			if !seen[to] {
+				seen[to] = true
+				out = append(out, to)
+			}
 		}
+		layout["text-font"] = out
 	}
-	if tf, ok := layout["text-field"].(string); ok {
-		switch tf {
-		case "{name}", "{name_en}":
+	if tf, ok := layout["text-field"]; ok {
+		b, _ := json.Marshal(tf)
+		switch s := string(b); {
+		case strings.Contains(s, "name"):
+			// {name}, {name_en}, "{name:latin}\n{name:nonlatin}" and the
+			// equivalent expressions all become one label in the chosen
+			// language, so the client can switch it (see preview.html).
 			layout["text-field"] = NameExpression(opt.Languages[0])
-		case "{ref}":
+		case strings.Contains(s, "ref"):
 			// road reference numbers are language-neutral
 		default:
-			if strings.Contains(tf, "{name") {
-				return fmt.Errorf("unhandled text-field %q", tf)
+			return fmt.Errorf("unhandled text-field %s", s)
+		}
+	}
+	return nil
+}
+
+// CheckFonts fails if a layer of the style uses a font stack that is not in
+// stacks (the glyph stacks installed under fonts/).
+func CheckFonts(raw []byte, stacks []string) error {
+	var style struct {
+		Layers []struct {
+			ID     string         `json:"id"`
+			Layout map[string]any `json:"layout"`
+		} `json:"layers"`
+	}
+	if err := json.Unmarshal(raw, &style); err != nil {
+		return fmt.Errorf("stylegen: parse style: %w", err)
+	}
+	have := map[string]bool{}
+	for _, s := range stacks {
+		have[s] = true
+	}
+	for _, l := range style.Layers {
+		v, ok := l.Layout["text-font"]
+		if !ok {
+			continue
+		}
+		fonts, _ := v.([]any)
+		if len(fonts) == 0 {
+			return fmt.Errorf("stylegen: layer %s: text-font must be a list of font names, got %v", l.ID, v)
+		}
+		for _, f := range fonts {
+			if name, _ := f.(string); !have[name] {
+				return fmt.Errorf("stylegen: layer %s uses font %v, which has no glyphs (have %v)", l.ID, f, stacks)
 			}
 		}
 	}

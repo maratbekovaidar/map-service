@@ -46,6 +46,9 @@ func TestLoadGatewayDefaults(t *testing.T) {
 	if g.TilesMaxAge != time.Hour || g.AuthDisabled || g.AuthRequireForTiles {
 		t.Errorf("auth/tiles defaults: %+v", g)
 	}
+	if g.DefaultStyle != "liberty" || g.StateDir != "" || len(g.AdminKeys) != 0 {
+		t.Errorf("style defaults: %q %q %v", g.DefaultStyle, g.StateDir, g.AdminKeys)
+	}
 }
 
 func TestLoadGatewayOverrides(t *testing.T) {
@@ -61,6 +64,9 @@ func TestLoadGatewayOverrides(t *testing.T) {
 		"OSRM_URL_TEMPLATE":    "http://r-%s.internal:5000/",
 		"GATEWAY_LOG_LEVEL":    "debug",
 		"REDIS_ADDR":           "redis:6379",
+		"DEFAULT_STYLE":        "2gis-like",
+		"STATE_DIR":            "/state",
+		"ADMIN_API_KEYS":       "adm1,adm2",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +83,9 @@ func TestLoadGatewayOverrides(t *testing.T) {
 	if got := g.OSRMURLs["bicycle"]; got != "http://r-bicycle.internal:5000" {
 		t.Errorf("template/trim: %q", got)
 	}
+	if g.DefaultStyle != "2gis-like" || g.StateDir != "/state" || len(g.AdminKeys) != 2 || g.AdminKeys[1] != "adm2" {
+		t.Errorf("style settings: %q %q %v", g.DefaultStyle, g.StateDir, g.AdminKeys)
+	}
 }
 
 func TestLoadGatewayReportsAllErrors(t *testing.T) {
@@ -88,11 +97,12 @@ func TestLoadGatewayReportsAllErrors(t *testing.T) {
 		"ROUTING_PROFILES":  "car,car,Bad Name",
 		"OSRM_URL_TEMPLATE": "http://osrm:5000",
 		"MAX_ROUTE_POINTS":  "1",
+		"DEFAULT_STYLE":     "../style",
 	}))
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	for _, want := range []string{"CITY_BBOX", "CACHE_TTL_ROUTE", "RATE_LIMIT_IP_RPS", "duplicate profile", "invalid profile name", "OSRM_URL_TEMPLATE", "MAX_ROUTE_POINTS"} {
+	for _, want := range []string{"CITY_BBOX", "CACHE_TTL_ROUTE", "RATE_LIMIT_IP_RPS", "duplicate profile", "invalid profile name", "OSRM_URL_TEMPLATE", "MAX_ROUTE_POINTS", "DEFAULT_STYLE"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
 		}

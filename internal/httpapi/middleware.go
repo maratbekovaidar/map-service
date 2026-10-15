@@ -178,7 +178,7 @@ func cors(origins []string) func(http.Handler) http.Handler {
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 				if ok {
 					h := w.Header()
-					h.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+					h.Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, OPTIONS")
 					h.Set("Access-Control-Allow-Headers", "X-API-Key, Content-Type, If-None-Match, X-Request-Id")
 					h.Set("Access-Control-Max-Age", "86400")
 				}

@@ -1,11 +1,9 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -113,21 +111,6 @@ func serveBytes(w http.ResponseWriter, r *http.Request, contentType, cacheContro
 
 func readStatic(dir string, parts ...string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(append([]string{dir}, parts...)...))
-}
-
-// GET /tiles/style.json
-func (s *Server) handleStyle(w http.ResponseWriter, r *http.Request) error {
-	b, err := readStatic(s.static.dir, "style.json")
-	if errors.Is(err, fs.ErrNotExist) {
-		return notFound("style.json is not installed")
-	}
-	if err != nil {
-		return internalError(err)
-	}
-	esc, _ := json.Marshal(s.static.publicBase(r))
-	b = bytes.ReplaceAll(b, []byte(publicURLPlaceholder), bytes.Trim(esc, `"`))
-	serveBytes(w, r, "application/json; charset=utf-8", "public, max-age=300", b)
-	return nil
 }
 
 // GET /tiles/preview.html
