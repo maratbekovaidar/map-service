@@ -64,7 +64,7 @@ func TestLoadGatewayOverrides(t *testing.T) {
 		"OSRM_URL_TEMPLATE":    "http://r-%s.internal:5000/",
 		"GATEWAY_LOG_LEVEL":    "debug",
 		"REDIS_ADDR":           "redis:6379",
-		"DEFAULT_STYLE":        "2gis-like",
+		"DEFAULT_STYLE":        "warm",
 		"STATE_DIR":            "/state",
 		"ADMIN_API_KEYS":       "adm1,adm2",
 	}))
@@ -83,7 +83,7 @@ func TestLoadGatewayOverrides(t *testing.T) {
 	if got := g.OSRMURLs["bicycle"]; got != "http://r-bicycle.internal:5000" {
 		t.Errorf("template/trim: %q", got)
 	}
-	if g.DefaultStyle != "2gis-like" || g.StateDir != "/state" || len(g.AdminKeys) != 2 || g.AdminKeys[1] != "adm2" {
+	if g.DefaultStyle != "warm" || g.StateDir != "/state" || len(g.AdminKeys) != 2 || g.AdminKeys[1] != "adm2" {
 		t.Errorf("style settings: %q %q %v", g.DefaultStyle, g.StateDir, g.AdminKeys)
 	}
 }

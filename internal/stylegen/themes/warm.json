@@ -1,14 +1,14 @@
 {
-  "id": "2gis-like",
+  "id": "warm",
   "base": "liberty",
-  "name": "2GIS-like",
-  "description": "Warm cream land, orange arterials, grey-outlined white streets and brown district labels after the default 2GIS theme.",
-  "derived-from": "Own colour scheme modelled on the palette of the default 2GIS (2gis.com) theme; no 2GIS icons, fonts or code are used",
+  "name": "Warm",
+  "description": "Warm cream land, orange arterials, grey-outlined white streets, light buildings and translucent brown district labels.",
+  "derived-from": "Own colour scheme of this repository",
   "notes": [
-    "Colours were taken from the default 2GIS MapGL theme (styles.2gis.com export) and mapped from 2GIS's road/area classes to OpenMapTiles ones:",
+    "Source note (not served to clients): the palette is modelled on the default 2GIS MapGL theme (styles.2gis.com export). Only colour values and a few line widths/text sizes were reused; no 2GIS icons, fonts, models, textures or code. 2GIS road/area classes were mapped to OpenMapTiles ones:",
     "2GIS Federal -> motorway, Magistral -> trunk/primary/secondary (+ links), Main -> tertiary, Other -> minor, Internal -> service/track. Secondary counts as Magistral because Astana's big prospects are tagged secondary in OSM.",
     "Liberty's POI icons (Maki) stay; POI label colours follow 2GIS's five category colours (red health, orange food, yellow leisure/lodging, green shops/nature, blue services).",
-    "Edit a value, run `make style-assets` and reload the preview (?style=2gis-like). A null paint/layout value removes the property."
+    "Edit a value, run `make style-assets` and reload the preview (?style=warm). A null paint/layout value removes the property."
   ],
   "light": {"anchor": "viewport", "color": "#FFFFFF", "intensity": 0.25, "position": [1.15, 230, 40]},
   "layers": {

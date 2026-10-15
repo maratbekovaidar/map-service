@@ -20,7 +20,7 @@ func stylesHarness(t *testing.T, env map[string]string) *harness {
 	t.Helper()
 	hs := newHarness(t, env, nil)
 	writeFile(t, filepath.Join(hs.static, "styles", "liberty.json"), styleDoc("OSM Liberty", "classic"))
-	writeFile(t, filepath.Join(hs.static, "styles", "2gis-like.json"), styleDoc("2GIS-like", "warm"))
+	writeFile(t, filepath.Join(hs.static, "styles", "warm.json"), styleDoc("Warm", "warm"))
 	return hs
 }
 
@@ -49,10 +49,10 @@ func TestListStyles(t *testing.T) {
 	if resp.Default != "liberty" || len(resp.Styles) != 2 {
 		t.Fatalf("response: %+v", resp)
 	}
-	gis, lib := resp.Styles[0], resp.Styles[1]
-	if gis.ID != "2gis-like" || gis.Name != "2GIS-like" || gis.Description != "warm" || gis.Default ||
-		gis.URL != "https://maps.example.com/tiles/styles/2gis-like.json" {
-		t.Errorf("2gis-like: %+v", gis)
+	lib, warm := resp.Styles[0], resp.Styles[1]
+	if warm.ID != "warm" || warm.Name != "Warm" || warm.Description != "warm" || warm.Default ||
+		warm.URL != "https://maps.example.com/tiles/styles/warm.json" {
+		t.Errorf("warm: %+v", warm)
 	}
 	if lib.ID != "liberty" || !lib.Default {
 		t.Errorf("liberty: %+v", lib)
@@ -61,8 +61,8 @@ func TestListStyles(t *testing.T) {
 
 func TestStyleByID(t *testing.T) {
 	hs := stylesHarness(t, nil)
-	rec := hs.do("GET", "/tiles/styles/2gis-like.json")
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"2GIS-like"`) ||
+	rec := hs.do("GET", "/tiles/styles/warm.json")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"Warm"`) ||
 		!strings.Contains(rec.Body.String(), `"https://maps.example.com/tiles/{z}/{x}/{y}.mvt"`) {
 		t.Fatalf("style by id: %d %s", rec.Code, rec.Body)
 	}
@@ -75,9 +75,9 @@ func TestStyleByID(t *testing.T) {
 }
 
 func TestDefaultStyleIsRevalidated(t *testing.T) {
-	hs := stylesHarness(t, map[string]string{"DEFAULT_STYLE": "2gis-like"})
+	hs := stylesHarness(t, map[string]string{"DEFAULT_STYLE": "warm"})
 	rec := hs.do("GET", "/tiles/style.json")
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"2GIS-like"`) {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"Warm"`) {
 		t.Fatalf("DEFAULT_STYLE not served: %d %s", rec.Code, rec.Body)
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
@@ -92,23 +92,23 @@ func TestSetDefaultStyle(t *testing.T) {
 	before := hs.do("GET", "/tiles/style.json")
 
 	// Client keys may not switch; unknown/invalid bodies are rejected.
-	wantError(t, hs.put("/v1/styles/default", `{"id":"2gis-like"}`, ""), http.StatusUnauthorized, CodeUnauthorized)
-	wantError(t, hs.put("/v1/styles/default", `{"id":"2gis-like"}`, testKey), http.StatusUnauthorized, CodeUnauthorized)
+	wantError(t, hs.put("/v1/styles/default", `{"id":"warm"}`, ""), http.StatusUnauthorized, CodeUnauthorized)
+	wantError(t, hs.put("/v1/styles/default", `{"id":"warm"}`, testKey), http.StatusUnauthorized, CodeUnauthorized)
 	wantError(t, hs.put("/v1/styles/default", `{"id":"nope"}`, adminKey), http.StatusBadRequest, CodeInvalidArgument)
 	wantError(t, hs.put("/v1/styles/default", `{"id":"../liberty"}`, adminKey), http.StatusBadRequest, CodeInvalidArgument)
 	wantError(t, hs.put("/v1/styles/default", `{"style":"liberty"}`, adminKey), http.StatusBadRequest, CodeInvalidArgument)
 	wantError(t, hs.put("/v1/styles/default", `not json`, adminKey), http.StatusBadRequest, CodeInvalidArgument)
 	wantError(t, hs.put("/v1/styles/default", `{"id":"`+strings.Repeat("a", 5000)+`"}`, adminKey), http.StatusBadRequest, CodeInvalidArgument)
 
-	rec := hs.put("/v1/styles/default", `{"id":"2gis-like"}`, adminKey)
+	rec := hs.put("/v1/styles/default", `{"id":"warm"}`, adminKey)
 	if rec.Code != 200 {
 		t.Fatalf("switch: %d %s", rec.Code, rec.Body)
 	}
-	if resp := decode[StylesResponse](t, rec); resp.Default != "2gis-like" || !resp.Styles[0].Default || resp.Styles[1].Default {
+	if resp := decode[StylesResponse](t, rec); resp.Default != "warm" || resp.Styles[0].Default || !resp.Styles[1].Default {
 		t.Errorf("response after switch: %+v", resp)
 	}
 	after := hs.do("GET", "/tiles/style.json")
-	if !strings.Contains(after.Body.String(), `"2GIS-like"`) || after.Header().Get("ETag") == before.Header().Get("ETag") {
+	if !strings.Contains(after.Body.String(), `"Warm"`) || after.Header().Get("ETag") == before.Header().Get("ETag") {
 		t.Errorf("style.json must serve the new default with a new ETag:\n%s", after.Body)
 	}
 	if r := hs.do("GET", "/tiles/style.json", "If-None-Match", before.Header().Get("ETag")); r.Code != 200 {
@@ -125,9 +125,9 @@ func TestSetDefaultStyle(t *testing.T) {
 
 	// A restarted gateway keeps the choice.
 	hs2 := newHarness(t, env, nil)
-	writeFile(t, filepath.Join(hs2.static, "styles", "2gis-like.json"), styleDoc("2GIS-like", "warm"))
+	writeFile(t, filepath.Join(hs2.static, "styles", "warm.json"), styleDoc("Warm", "warm"))
 	writeFile(t, filepath.Join(hs2.static, "styles", "liberty.json"), styleDoc("OSM Liberty", "classic"))
-	if r := hs2.do("GET", "/tiles/style.json"); !strings.Contains(r.Body.String(), `"2GIS-like"`) {
+	if r := hs2.do("GET", "/tiles/style.json"); !strings.Contains(r.Body.String(), `"Warm"`) {
 		t.Errorf("after restart:\n%s", r.Body)
 	}
 }
@@ -135,7 +135,7 @@ func TestSetDefaultStyle(t *testing.T) {
 func TestSetDefaultStyleDisabledWithoutAdminKeys(t *testing.T) {
 	// Not even AUTH_DISABLED opens it.
 	hs := stylesHarness(t, map[string]string{"AUTH_DISABLED": "true"})
-	wantError(t, hs.put("/v1/styles/default", `{"id":"2gis-like"}`, testKey), http.StatusForbidden, CodeForbidden)
+	wantError(t, hs.put("/v1/styles/default", `{"id":"warm"}`, testKey), http.StatusForbidden, CodeForbidden)
 	if r := hs.do("GET", "/v1/styles"); r.Code != 200 {
 		t.Errorf("listing with AUTH_DISABLED: %d", r.Code)
 	}

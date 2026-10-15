@@ -269,7 +269,7 @@ func LoadGateway(get Getenv) (*Gateway, error) {
 	g.StateDir = l.str("STATE_DIR", "")
 	g.DefaultStyle = l.str("DEFAULT_STYLE", "liberty")
 	if !styles.ValidID(g.DefaultStyle) {
-		l.fail("DEFAULT_STYLE=%q: want a style id like liberty or 2gis-like (lowercase letters, digits, '-')", g.DefaultStyle)
+		l.fail("DEFAULT_STYLE=%q: want a style id like liberty or dark-matter (lowercase letters, digits, '-')", g.DefaultStyle)
 	}
 	g.DataVersionTTL = l.dur("DATA_VERSION_POLL", 10*time.Second)
 

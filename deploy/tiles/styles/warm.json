@@ -5321,16 +5321,16 @@
     ]
   },
   "metadata": {
-    "map-service:derived-from": "Own colour scheme modelled on the palette of the default 2GIS (2gis.com) theme; no 2GIS icons, fonts or code are used; layers and data wiring: OSM Liberty (maputnik/osm-liberty), BSD licence; design CC-BY 3.0 (Mapbox OSM Bright); data schema OpenMapTiles CC-BY 4.0",
-    "map-service:description": "Warm cream land, orange arterials, grey-outlined white streets and brown district labels after the default 2GIS theme.",
+    "map-service:derived-from": "Own colour scheme of this repository; layers and data wiring: OSM Liberty (maputnik/osm-liberty), BSD licence; design CC-BY 3.0 (Mapbox OSM Bright); data schema OpenMapTiles CC-BY 4.0",
+    "map-service:description": "Warm cream land, orange arterials, grey-outlined white streets, light buildings and translucent brown district labels.",
     "map-service:languages": [
       "ru",
       "kk",
       "en"
     ],
-    "map-service:style-id": "2gis-like"
+    "map-service:style-id": "warm"
   },
-  "name": "2GIS-like",
+  "name": "Warm",
   "sources": {
     "openmaptiles": {
       "attribution": "\u003ca href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\"\u003e\u0026copy; OpenStreetMap contributors\u003c/a\u003e \u003ca href=\"https://openmaptiles.org/\" target=\"_blank\"\u003e\u0026copy; OpenMapTiles\u003c/a\u003e",

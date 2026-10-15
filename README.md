@@ -160,11 +160,11 @@ curl -s $B/tiles/styles/positron.json               # конкретный ст�
 ```bash
 curl -s -H "X-API-Key: $KEY" $B/v1/styles
 curl -s -X PUT -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
-  -d '{"id":"2gis-like"}' $B/v1/styles/default
+  -d '{"id":"warm"}' $B/v1/styles/default
 ```
 ```json
-{"default":"2gis-like","styles":[{"id":"2gis-like","name":"2GIS-like","description":"…","url":"http://localhost/tiles/styles/2gis-like.json","default":true},
- {"id":"dark-matter",…},{"id":"liberty",…},{"id":"positron",…}]}
+{"default":"warm","styles":[{"id":"dark-matter",…},{"id":"liberty",…},{"id":"positron",…},
+ {"id":"warm","name":"Warm","description":"…","url":"http://localhost/tiles/styles/warm.json","default":true}]}
 ```
 
 Ошибки всегда вида `{"error":{"code":"…","message":"…"}}`:
@@ -187,7 +187,7 @@ curl -s -X PUT -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
 ## Стиль, тайлы и Flutter-клиент
 
 * Тайлы: `tilemaker` (схема OpenMapTiles) пишет `data/<v>/tiles/city.pmtiles`; gateway раздаёт его встроенным `go-pmtiles` как `/tiles/{z}/{x}/{y}.mvt` (z0–14, дальше клиент делает overzoom). Тайлы всегда хранятся и отдаются сжатыми gzip (`Content-Encoding: gzip`) с `ETag` и `Cache-Control: public, max-age=3600`; Caddy распаковывает их только для клиента, не приславшего `Accept-Encoding: gzip`.
-* Стили: OSM Liberty, Positron, Dark Matter (код BSD, дизайн CC-BY) и собственная тема `2gis-like`; все адаптированы `cmd/stylegen`: URL указывают на gateway, сторонние CDN и растровый слой рельефа убраны, Roboto/Metropolis заменены на Noto Sans (OFL), подписи — `coalesce(name:<язык>, name:latin)` с первым языком из `LANGUAGES`. Атрибуции заданы в каждом стиле. Выбор и смена дефолтного стиля — [в следующем разделе](#стили-карты-выбор-и-дефолтный-стиль).
+* Стили: OSM Liberty, Positron, Dark Matter (код BSD, дизайн CC-BY) и собственная тема `warm`; все адаптированы `cmd/stylegen`: URL указывают на gateway, сторонние CDN и растровый слой рельефа убраны, Roboto/Metropolis заменены на Noto Sans (OFL), подписи — `coalesce(name:<язык>, name:latin)` с первым языком из `LANGUAGES`. Атрибуции заданы в каждом стиле. Выбор и смена дефолтного стиля — [в следующем разделе](#стили-карты-выбор-и-дефолтный-стиль).
 * Шрифты, спрайты и превью — статические файлы, вшитые в образ gateway (`deploy/tiles`).
 
 Flutter (`maplibre_gl`): `styleString: 'https://maps.example.com/tiles/style.json'` (дефолтный стиль; конкретный — `/tiles/styles/<id>.json`, список — `GET /v1/styles`); при `AUTH_REQUIRE_FOR_TILES=true` передавайте `X-API-Key` через механизм заголовков запросов плагина. Смена языка в приложении: заменить выражение `text-field` `["coalesce",["get","name:ru"],["get","name:latin"]]` на другой `name:<язык>` (рабочий пример — `deploy/tiles/preview.html`).
@@ -201,16 +201,16 @@ Flutter (`maplibre_gl`): `styleString: 'https://maps.example.com/tiles/style.jso
 | `liberty` | OSM Liberty — цветная карта с иконками POI (стиль по умолчанию) |
 | `positron` | светло-серая неконтрастная подложка под маршруты и маркеры |
 | `dark-matter` | тёмная подложка для ночного режима |
-| `2gis-like` | собственная тема на основе Liberty с палитрой дефолтной темы 2GIS: кремовая земля, оранжевые магистрали, белые улицы с серой обводкой, светлые здания, полупрозрачные коричневые подписи районов, цвета подписей POI по категориям, номера домов с z16 |
+| `warm` | собственная тема на основе Liberty: кремовая земля, оранжевые магистрали, белые улицы с серой обводкой, светлые здания с мягким 3D, полупрозрачные коричневые подписи районов, цвета подписей POI по категориям, номера домов с z16 |
 
 * `GET /v1/styles` (обычный API-ключ) — список: `id`, `name`, `description`, `url`, `default`.
 * `GET /tiles/styles/<id>.json` — конкретный стиль; `GET /tiles/style.json` — **дефолтный** (его и берёт мобильное приложение). Стили отдаются с `Cache-Control: no-cache` и `ETag`: клиенты видят смену дефолтного стиля (и пересобранную тему) при следующей загрузке стиля, а повторная загрузка без изменений — дешёвый `304`.
 * `PUT /v1/styles/default` с телом `{"id":"<id>"}` — сделать стиль дефолтным для всех клиентов, без перезапуска. Нужен ключ из `ADMIN_API_KEYS` (обычные ключи клиентов не подходят; админские ключи работают и как обычные). Пустой `ADMIN_API_KEYS` выключает эндпоинт (`403`), `AUTH_DISABLED` его не открывает. Выбор сохраняется в томе `gateway-state` (`STATE_DIR=/state`) и переживает рестарты; до первого выбора действует `DEFAULT_STYLE` (по умолчанию `liberty`). Если выбранный стиль пропал из образа, gateway откатывается на `DEFAULT_STYLE`.
 * Страница превью `/tiles/preview.html`: выпадающий список **Style** (из `GET /v1/styles`, нужен ключ в поле API key) переключает стиль на карте, `?style=<id>` открывает конкретный стиль, кнопка **Make default** вызывает `PUT /v1/styles/default` (введите админский ключ).
 
-**Как поиграться со стилем.** Тема — это JSON поверх базового стиля: [`internal/stylegen/themes/2gis-like.json`](internal/stylegen/themes/2gis-like.json). В `layers` — переопределения `paint`/`layout`/`filter`/`minzoom`/`maxzoom` существующих слоёв по `id` (значение `null` удаляет свойство), в `insert` — новые слои с якорем `before`, `"text-field": "{name}"` превращается в выражение с языком. Поменяйте цвет, выполните `make style-assets` и обновите превью (`?style=2gis-like`); пересоберите gateway (`make up`), чтобы стиль попал в образ. Новая тема — новый файл в `internal/stylegen/themes/` с уникальным `id` и `base` (`liberty`, `positron` или `dark-matter`). Генератор падает, если тема ссылается на несуществующий слой или шрифт без глифов, а `test/repo` — если закоммиченный стиль устарел относительно темы. Для визуальной правки удобен [Maputnik](https://maplibre.org/maputnik/): откройте в нём `/tiles/styles/<id>.json`, а найденные значения перенесите в тему.
+**Как поиграться со стилем.** Тема — это JSON поверх базового стиля: [`internal/stylegen/themes/warm.json`](internal/stylegen/themes/warm.json). В `layers` — переопределения `paint`/`layout`/`filter`/`minzoom`/`maxzoom` существующих слоёв по `id` (значение `null` удаляет свойство), в `insert` — новые слои с якорем `before`, `"text-field": "{name}"` превращается в выражение с языком. Поменяйте цвет, выполните `make style-assets` и обновите превью (`?style=warm`); пересоберите gateway (`make up`), чтобы стиль попал в образ. Новая тема — новый файл в `internal/stylegen/themes/` с уникальным `id` и `base` (`liberty`, `positron` или `dark-matter`). Генератор падает, если тема ссылается на несуществующий слой или шрифт без глифов, а `test/repo` — если закоммиченный стиль устарел относительно темы. Для визуальной правки удобен [Maputnik](https://maplibre.org/maputnik/): откройте в нём `/tiles/styles/<id>.json`, а найденные значения перенесите в тему.
 
-Тема `2gis-like` использует только цвета, снятые с экспорта дефолтной темы 2GIS (формат 2GIS MapGL несовместим с MapLibre и схемой OpenMapTiles, поэтому слои сопоставлены вручную: Federal → motorway, Magistral → trunk/primary, Main → secondary/tertiary, Other → minor, Internal → service/track). Иконки, шрифты и код 2GIS не используются: иконки POI — открытые Maki из OSM Liberty.
+Происхождение палитры `warm`: цвета (и несколько ширин линий и размеров подписей) сняты с экспорта дефолтной темы 2GIS и вручную сопоставлены со слоями OpenMapTiles (Federal → motorway, Magistral → trunk/primary/secondary, Main → tertiary, Other → minor, Internal → service/track; `secondary` считается магистралью, потому что крупные проспекты Астаны размечены в OSM именно так). Иконки, шрифты, модели и код 2GIS не используются, иконки POI — открытые Maki из OSM Liberty. В видимых клиентам названии, описании и метаданных стиля 2GIS не упоминается; пометка об источнике есть только в `notes` исходника темы.
 
 ## Пайплайн данных и обновления
 

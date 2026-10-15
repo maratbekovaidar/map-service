@@ -25,11 +25,11 @@ func fixture(t *testing.T) (dir, state string) {
 	root := t.TempDir()
 	dir, state = filepath.Join(root, "styles"), filepath.Join(root, "state")
 	install(t, dir, map[string]string{
-		"liberty.json":   `{"name":"OSM Liberty","metadata":{"map-service:description":"classic"},"layers":[]}`,
-		"2gis-like.json": `{"name":"2GIS-like","metadata":{"map-service:description":"warm"},"layers":[]}`,
-		"bare.json":      `{"layers":[]}`,
-		"Bad Name.json":  `{}`,
-		"notes.txt":      `not a style`,
+		"liberty.json":  `{"name":"OSM Liberty","metadata":{"map-service:description":"classic"},"layers":[]}`,
+		"warm.json":     `{"name":"Warm","metadata":{"map-service:description":"warm"},"layers":[]}`,
+		"bare.json":     `{"layers":[]}`,
+		"Bad Name.json": `{}`,
+		"notes.txt":     `not a style`,
 	})
 	if err := os.Mkdir(state, 0o755); err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestList(t *testing.T) {
 	for _, st := range list {
 		got = append(got, st.ID+"|"+st.Name+"|"+st.Description)
 	}
-	if want := "2gis-like|2GIS-like|warm,bare|bare|,liberty|OSM Liberty|classic"; strings.Join(got, ",") != want {
+	if want := "bare|bare|,liberty|OSM Liberty|classic,warm|Warm|warm"; strings.Join(got, ",") != want {
 		t.Errorf("list = %v, want %s", got, want)
 	}
 	if list, err := New(filepath.Join(dir, "missing"), "", "liberty").List(); err != nil || len(list) != 0 {
@@ -74,10 +74,10 @@ func TestDefaultFallsBackAndPersists(t *testing.T) {
 	if err := c.SetDefault("../liberty"); !errors.Is(err, ErrUnknown) {
 		t.Errorf("path-like id: %v", err)
 	}
-	if err := c.SetDefault("2gis-like"); err != nil {
+	if err := c.SetDefault("warm"); err != nil {
 		t.Fatal(err)
 	}
-	if id, _ := c.Default(); id != "2gis-like" {
+	if id, _ := c.Default(); id != "warm" {
 		t.Errorf("after SetDefault: %q", id)
 	}
 	if !c.Persistent() {
@@ -89,7 +89,7 @@ func TestDefaultFallsBackAndPersists(t *testing.T) {
 	if err := c2.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if id, _ := c2.Default(); id != "2gis-like" {
+	if id, _ := c2.Default(); id != "warm" {
 		t.Errorf("after restart: %q", id)
 	}
 	entries, _ := os.ReadDir(state)
@@ -98,7 +98,7 @@ func TestDefaultFallsBackAndPersists(t *testing.T) {
 	}
 
 	// The chosen style disappears (e.g. a new image without it): back to DEFAULT_STYLE.
-	if err := os.Remove(filepath.Join(dir, "2gis-like.json")); err != nil {
+	if err := os.Remove(filepath.Join(dir, "warm.json")); err != nil {
 		t.Fatal(err)
 	}
 	if id, _ := c2.Default(); id != "liberty" {

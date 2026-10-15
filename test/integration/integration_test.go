@@ -482,7 +482,7 @@ func TestStyleCatalogue(t *testing.T) {
 			t.Errorf("%s: HTTP %d, name %q, %d layers", path, resp.StatusCode, doc.Name, len(doc.Layers))
 		}
 	}
-	for _, id := range []string{"liberty", "positron", "dark-matter", "2gis-like"} {
+	for _, id := range []string{"liberty", "positron", "dark-matter", "warm"} {
 		if !ids[id] {
 			t.Errorf("style %s is not installed (got %v)", id, ids)
 		}

@@ -224,7 +224,7 @@ func TestEmbeddedThemesParse(t *testing.T) {
 }
 
 func TestValidID(t *testing.T) {
-	for _, id := range []string{"liberty", "2gis-like", "dark-matter", "a"} {
+	for _, id := range []string{"liberty", "warm", "dark-matter", "a"} {
 		if !ValidID(id) {
 			t.Errorf("%q should be valid", id)
 		}

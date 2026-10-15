@@ -215,7 +215,7 @@ paths:
               required: [id]
               additionalProperties: false
               properties:
-                id: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,47}$", example: 2gis-like }
+                id: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,47}$", example: warm }
       responses:
         "200":
           description: The catalogue after the switch.
@@ -294,7 +294,7 @@ paths:
       summary: One installed MapLibre style
       description: |
         Installed: `liberty` (OSM Liberty), `positron` (light), `dark-matter`
-        (dark), `2gis-like` (palette after 2GIS). See `GET /v1/styles`.
+        (dark), `warm` (warm cream palette, orange arterials). See `GET /v1/styles`.
       security: [{}, { ApiKeyAuth: [] }]
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,47}$", example: positron } }
@@ -679,10 +679,10 @@ components:
       type: object
       required: [id, name, description, url, default]
       properties:
-        id: { type: string, example: 2gis-like }
-        name: { type: string, example: 2GIS-like }
+        id: { type: string, example: warm }
+        name: { type: string, example: Warm }
         description: { type: string }
-        url: { type: string, format: uri, example: "https://maps.example.com/tiles/styles/2gis-like.json" }
+        url: { type: string, format: uri, example: "https://maps.example.com/tiles/styles/warm.json" }
         default: { type: boolean, description: "Whether /tiles/style.json serves this style." }
 
     StylesResponse:
