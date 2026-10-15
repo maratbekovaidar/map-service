@@ -69,7 +69,7 @@ curl -s localhost/readyz
 
 Локальный запуск без TLS: оставьте `SITE_ADDRESS=:80` и `PUBLIC_BASE_URL=http://localhost`. Продакшн: `SITE_ADDRESS=maps.example.com`, `PUBLIC_BASE_URL=https://maps.example.com` (последнее попадает в `style.json`, поэтому должно совпадать с адресом, по которому реально ходят клиенты).
 
-Карта: `http://localhost/tiles/preview.html`.
+Карта: `http://localhost/tiles/preview.html`. Это не только просмотр тайлов, но и песочница для API: поиск с автодополнением (Enter — геокодинг), клик по карте показывает адрес точки (`/v1/reverse`), кнопка **Route** включает построение маршрута (клики ставят A, B и промежуточные точки, маркеры перетаскиваются, для двух точек показываются альтернативы и пошаговые инструкции; профили `car`/`foot`). Для `/v1/*` нужен ключ: откройте страницу с `?key=<ключ из API_KEYS>` или введите его в поле на панели.
 
 Документация API (Swagger UI с «Try it out»): `http://localhost/docs`; нажмите **Authorize** и введите ключ из `API_KEYS`, чтобы вызывать `/v1/*` прямо со страницы. Спецификация — `http://localhost/openapi.yaml` (`servers` в ней подставляется под адрес, с которого её открыли).
 

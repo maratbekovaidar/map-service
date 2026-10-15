@@ -4,22 +4,105 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Map preview</title>
-  <!-- Opens the map from this service's own style.json, tiles, glyphs and sprites.
+  <!-- Opens the map from this service's own style.json, tiles, glyphs and sprites, and
+       tries the API on it: search (autocomplete + geocode), address of a clicked point and routing.
        MapLibre GL JS is vendored (deploy/tiles/vendor): no third-party hosts are contacted.
-       Served at /tiles/preview.html; add ?key=<API key> when AUTH_REQUIRE_FOR_TILES=true. -->
+       Served at /tiles/preview.html. /v1/* needs an API key: add ?key=<API key> or type it into
+       the panel (kept in sessionStorage). The key is sent to this service only. -->
   <link rel="stylesheet" href="vendor/maplibre-gl.css">
   <style>
-    html, body { height: 100%; margin: 0; font: 14px/1.4 system-ui, sans-serif; }
+    html, body { height: 100%; margin: 0; font: 14px/1.4 system-ui, sans-serif; color: #202124; }
     #map { position: absolute; inset: 0; }
-    #bar { position: absolute; z-index: 2; top: 10px; left: 10px; display: flex; gap: 8px; align-items: center;
-           background: rgba(255,255,255,.92); padding: 6px 10px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
-    #status { color: #555; }
-    #status.error { color: #b00020; }
+    body.route-mode .maplibregl-canvas-container.maplibregl-interactive { cursor: crosshair; }
+
+    #panel { position: absolute; z-index: 2; top: 10px; left: 10px; box-sizing: border-box;
+             width: min(360px, calc(100vw - 20px)); max-height: calc(100% - 20px); overflow: auto;
+             display: flex; flex-direction: column; gap: 8px; padding: 10px;
+             background: rgba(255,255,255,.95); border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+    #panel .row { display: flex; gap: 6px; align-items: center; }
+    #panel input[type=search], #panel input[type=password] { flex: 1; min-width: 0; box-sizing: border-box;
+             padding: 6px 8px; border: 1px solid #c4c7c5; border-radius: 6px; font: inherit; }
+    #panel input:focus-visible, #panel button:focus-visible, #panel select:focus-visible, #results li:focus-visible
+             { outline: 2px solid #1a73e8; outline-offset: 1px; }
+    #panel button { padding: 5px 10px; border: 1px solid #c4c7c5; border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
+    #panel button:hover { background: #f1f3f4; }
+    #panel button[aria-pressed=true] { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+    #panel select { font: inherit; }
+    .muted { color: #5f6368; font-size: 12px; }
+    #hint { margin: 0; }
+    #status { color: #555; font-size: 12px; }
+    #status.error, .err { color: #b00020; }
+    #key.missing { border-color: #b00020; }
+
+    #results { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow: auto; border: 1px solid #e0e0e0; border-radius: 6px; }
+    #results li { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+    #results li:last-child { border-bottom: 0; }
+    #results li:hover, #results li[aria-selected=true] { background: #e8f0fe; }
+    #results li.empty { cursor: default; color: #5f6368; }
+    #results li.empty:hover { background: none; }
+    .r-name { font-weight: 600; }
+
+    #route { display: flex; flex-direction: column; gap: 6px; }
+    #route ol { list-style: none; margin: 0; padding: 0; }
+    #wps li { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
+    #wps .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #wps button { padding: 0 6px; line-height: 20px; }
+    .alt { display: block; width: 100%; text-align: left; margin-bottom: 4px; }
+    #panel button.alt[aria-pressed=true] { background: #e8f0fe; border-color: #1a73e8; color: inherit; }
+    #steps { max-height: 30vh; overflow: auto; border-top: 1px solid #eee; }
+    #steps li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; cursor: pointer; }
+    #steps li:hover { background: #f5f5f5; }
+
+    .wp { box-sizing: border-box; width: 26px; height: 26px; border-radius: 50%; background: #5f6368; color: #fff;
+          font: 600 13px/22px system-ui, sans-serif; text-align: center; border: 2px solid #fff;
+          box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+    .wp.start { background: #188038; }
+    .wp.end { background: #d93025; }
+    .wp.via { background: #1a73e8; }
+    .marker.wp { cursor: grab; }
+    #wps .wp { flex: none; cursor: default; }
+
+    @media (max-width: 720px) {
+      /* leave room for the zoom buttons and keep part of the map visible */
+      #panel { width: calc(100vw - 70px); max-height: 55%; }
+      #steps { max-height: 18vh; }
+    }
+
+    .pop { min-width: 180px; padding-right: 8px; }
+    .pop-name { font-weight: 600; }
+    .pop-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .pop-actions button { padding: 3px 8px; border: 1px solid #c4c7c5; border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
+    .pop-actions button:hover { background: #f1f3f4; }
   </style>
 </head>
 <body>
-  <div id="bar">
-    <label>Language <select id="lang"></select></label>
+  <div id="panel">
+    <div class="row">
+      <input id="q" type="search" placeholder="Search address or place" aria-label="Search address or place"
+             autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="results">
+    </div>
+    <ul id="results" role="listbox" hidden></ul>
+
+    <div class="row">
+      <button id="routeBtn" type="button" aria-pressed="false">Route</button>
+      <select id="profile" aria-label="Routing profile" title="Routing profile">
+        <option>car</option>
+        <option>foot</option>
+      </select>
+      <button id="clearBtn" type="button" title="Remove the route, markers and search results">Clear</button>
+    </div>
+    <p id="hint" class="muted"></p>
+
+    <div id="route" hidden>
+      <ol id="wps"></ol>
+      <div id="alts"></div>
+      <ol id="steps"></ol>
+    </div>
+
+    <div class="row">
+      <label class="muted">Language <select id="lang"></select></label>
+      <input id="key" type="password" placeholder="API key" aria-label="API key" autocomplete="off">
+    </div>
     <span id="status">loading style…</span>
   </div>
   <div id="map"></div>
@@ -27,9 +110,31 @@
   <script src="vendor/maplibre-gl.js"></script>
   <script>
     const params = new URLSearchParams(location.search);
-    const apiKey = params.get('key');
-    const statusEl = document.getElementById('status');
-    const langEl = document.getElementById('lang');
+    const store = {
+      get(k) { try { return sessionStorage.getItem(k) || ''; } catch { return ''; } },
+      set(k, v) { try { sessionStorage.setItem(k, v); } catch { /* storage may be blocked */ } },
+    };
+    let apiKey = params.get('key') || store.get('apiKey');
+
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $('status'), langEl = $('lang'), qEl = $('q'), resultsEl = $('results'), keyEl = $('key');
+    const routeBtn = $('routeBtn'), profileEl = $('profile'), hintEl = $('hint');
+    const routeEl = $('route'), wpsEl = $('wps'), altsEl = $('alts'), stepsEl = $('steps');
+    keyEl.value = apiKey;
+
+    // DOM builder: text always goes in as text nodes, never as HTML (names come from OSM data).
+    function h(tag, attrs, ...kids) {
+      const e = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+      }
+      for (const c of kids.flat()) if (c != null && c !== false) e.append(c);
+      return e;
+    }
+    function setStatus(text, isError) {
+      statusEl.textContent = text;
+      statusEl.className = isError ? 'error' : '';
+    }
 
     const map = new maplibregl.Map({
       container: 'map',
@@ -42,6 +147,328 @@
     });
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }));
+
+    // ------------------------------------------------------------------ API
+    const inflight = {};
+    // Calls GET /v1/<path>. A newer call with the same `slot` aborts the previous one.
+    async function api(path, query, slot) {
+      inflight[slot]?.abort();
+      const ctl = inflight[slot] = new AbortController();
+      const url = new URL('../v1/' + path, location.href);
+      for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== '') url.searchParams.set(k, v);
+      const res = await fetch(url, { headers: apiKey ? { 'X-API-Key': apiKey } : {}, signal: ctl.signal });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = new Error((body && body.error && body.error.message) || res.statusText);
+        err.status = res.status;
+        throw err;
+      }
+      return body;
+    }
+    function showError(e) {
+      if (e.name === 'AbortError') return;
+      if (e.status === 401) {
+        keyEl.classList.add('missing');
+        keyEl.focus();
+        setStatus('API key required: enter it in the field below', true);
+      } else {
+        setStatus(e.message, true);
+      }
+    }
+    keyEl.addEventListener('change', () => {
+      apiKey = keyEl.value.trim();
+      store.set('apiKey', apiKey);
+      keyEl.classList.remove('missing');
+      setStatus('ok');
+    });
+    const lang = () => langEl.value || undefined;
+
+    const fmtLL = (ll) => ll[1].toFixed(5) + ', ' + ll[0].toFixed(5);
+    const addrLine = (a) => [[a.street, a.house_number].filter(Boolean).join(' '), a.district, a.city].filter(Boolean).join(', ');
+    const placeName = (p) => p.name || addrLine(p.address) || 'Unnamed place';
+    const fmtDist = (m) => m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + ' km' : Math.round(m) + ' m';
+    function fmtDur(s) {
+      const m = Math.round(s / 60);
+      if (m < 1) return '<1 min';
+      return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
+    }
+
+    // --------------------------------------------------- picked point + popup
+    let pick = null;
+    function showPick(ll, node) {
+      if (!pick) {
+        pick = { marker: new maplibregl.Marker({ color: '#d93025' }), popup: new maplibregl.Popup({ maxWidth: '300px', closeOnClick: false }) };
+        pick.marker.setPopup(pick.popup);
+      }
+      pick.marker.setLngLat(ll).addTo(map);
+      pick.popup.setDOMContent(node);
+      if (!pick.popup.isOpen()) pick.marker.togglePopup();
+    }
+    function clearPick() {
+      if (pick) { pick.popup.remove(); pick.marker.remove(); }
+    }
+    function placeNode(p, ll) {
+      const name = p ? placeName(p) : 'No address here';
+      return h('div', { class: 'pop' },
+        h('div', { class: 'pop-name' }, name),
+        p && addrLine(p.address) && addrLine(p.address) !== name ? h('div', {}, addrLine(p.address)) : null,
+        p ? h('div', { class: 'muted' }, [p.type, p.source, p.id].filter(Boolean).join(' · ')) : null,
+        h('div', { class: 'muted' }, fmtLL(ll)),
+        h('div', { class: 'pop-actions' },
+          h('button', { type: 'button', onclick: () => setWaypoint('start', ll, p && name) }, 'Route from here'),
+          h('button', { type: 'button', onclick: () => setWaypoint('end', ll, p && name) }, 'Route to here')));
+    }
+
+    // Address of a clicked point: GET /v1/reverse.
+    async function lookupPoint(lngLat) {
+      const ll = [lngLat.lng, lngLat.lat];
+      showPick(ll, h('div', { class: 'muted' }, 'Looking up…'));
+      try {
+        const p = await api('reverse', { lat: ll[1].toFixed(6), lon: ll[0].toFixed(6), lang: lang() }, 'reverse');
+        showPick(ll, placeNode(p, ll));
+        setStatus('ok');
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        if (e.status === 404) { showPick(ll, placeNode(null, ll)); setStatus('ok'); return; }
+        showPick(ll, h('div', { class: 'err' }, e.message));
+        showError(e);
+      }
+    }
+
+    // --------------------------------------------------------------- search
+    let places = [], active = -1, acTimer;
+    function hideResults() {
+      resultsEl.hidden = true;
+      resultsEl.replaceChildren();
+      qEl.setAttribute('aria-expanded', 'false');
+      places = []; active = -1;
+    }
+    function setActive(i) {
+      const items = [...resultsEl.children];
+      if (!places.length) return;
+      active = (i + items.length) % items.length;
+      items.forEach((li, j) => li.setAttribute('aria-selected', String(j === active)));
+      items[active].scrollIntoView({ block: 'nearest' });
+    }
+    function showResults(list) {
+      places = list;
+      active = -1;
+      resultsEl.replaceChildren(...(list.length
+        ? list.map((p, i) => h('li', { role: 'option', 'aria-selected': 'false', onclick: () => selectPlace(places[i]) },
+            h('div', { class: 'r-name' }, placeName(p)),
+            h('div', { class: 'muted' }, [addrLine(p.address) !== placeName(p) ? addrLine(p.address) : '', p.type].filter(Boolean).join(' · '))))
+        : [h('li', { class: 'empty' }, 'Nothing found')]));
+      resultsEl.hidden = false;
+      qEl.setAttribute('aria-expanded', 'true');
+    }
+    function selectPlace(p) {
+      hideResults();
+      qEl.value = placeName(p);
+      const ll = [p.lon, p.lat];
+      showPick(ll, placeNode(p, ll));
+      map.flyTo({ center: ll, zoom: Math.max(map.getZoom(), 16) });
+    }
+    // kind: 'autocomplete' while typing (biased to the map centre), 'geocode' on Enter.
+    async function runSearch(kind, q) {
+      const c = map.getCenter();
+      try {
+        const data = await api(kind, {
+          q, lang: lang(), limit: 8,
+          lat: kind === 'autocomplete' ? c.lat.toFixed(5) : undefined,
+          lon: kind === 'autocomplete' ? c.lng.toFixed(5) : undefined,
+        }, 'search');
+        showResults(data.places || []);
+        setStatus('ok');
+      } catch (e) { showError(e); }
+    }
+    qEl.addEventListener('input', () => {
+      clearTimeout(acTimer);
+      inflight.search?.abort();
+      const q = qEl.value.trim();
+      if (q.length < 2) { hideResults(); return; }
+      acTimer = setTimeout(() => runSearch('autocomplete', q), 250);
+    });
+    qEl.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setActive(active + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(active - 1); }
+      else if (e.key === 'Escape') { hideResults(); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        clearTimeout(acTimer);
+        const q = qEl.value.trim();
+        if (active >= 0) selectPlace(places[active]);
+        else if (q) runSearch('geocode', q);
+      }
+    });
+
+    // ---------------------------------------------------------------- route
+    // Ordered points: start, via..., end. start and end may be set independently
+    // ("Route to here" before "Route from here").
+    const route = { start: null, end: null, via: [] };
+    let routes = [], selected = 0, routeMode = false;
+    const pts = () => [route.start, ...route.via, route.end].filter(Boolean);
+    const roleOf = (wp) => wp === route.start ? 'start' : wp === route.end ? 'end' : 'via';
+    const labelOf = (wp) => ({ start: 'A', end: 'B' })[roleOf(wp)] || String(route.via.indexOf(wp) + 1);
+
+    function updateHint() {
+      hintEl.textContent = routeMode
+        ? 'Click the map to add start, end and via points; drag markers to move them.'
+        : 'Click the map to see the address of a point.';
+      routeEl.hidden = !(routeMode || pts().length);
+    }
+    function setRouteMode(on) {
+      routeMode = on;
+      document.body.classList.toggle('route-mode', on);
+      routeBtn.setAttribute('aria-pressed', String(on));
+      updateHint();
+    }
+    routeBtn.addEventListener('click', () => setRouteMode(!routeMode));
+
+    function makeWp(ll, label) {
+      const el = h('div', { class: 'wp marker', title: 'Drag to move' });
+      const marker = new maplibregl.Marker({ element: el, draggable: true }).setLngLat(ll).addTo(map);
+      const wp = { el, marker, ll, label };
+      marker.on('dragend', () => {
+        const p = marker.getLngLat();
+        wp.ll = [p.lng, p.lat];
+        wp.label = '';
+        refreshRoute(false);
+      });
+      return wp;
+    }
+    function setWaypoint(role, ll, label) {
+      clearPick();
+      setRouteMode(true);
+      route[role]?.marker.remove();
+      route[role] = makeWp(ll, label);
+      refreshRoute(true);
+    }
+    function addWaypoint(lngLat) {
+      const ll = [lngLat.lng, lngLat.lat];
+      if (!route.start) setWaypoint('start', ll);
+      else if (!route.end) setWaypoint('end', ll);
+      else { route.via.push(makeWp(ll)); refreshRoute(true); }
+    }
+    function removeWp(wp) {
+      wp.marker.remove();
+      if (route.start === wp) route.start = null;
+      else if (route.end === wp) route.end = null;
+      else route.via.splice(route.via.indexOf(wp), 1);
+      refreshRoute(true);
+    }
+    function clearAll() {
+      for (const wp of pts()) wp.marker.remove();
+      route.start = route.end = null;
+      route.via = [];
+      inflight.route?.abort();
+      clearPick();
+      hideResults();
+      qEl.value = '';
+      renderRoutes([]);
+      refreshRoute(false);
+      setStatus('ok');
+    }
+    $('clearBtn').addEventListener('click', clearAll);
+    profileEl.addEventListener('change', () => refreshRoute(false));
+
+    function refreshRoute(fit) {
+      const list = pts();
+      for (const wp of list) {
+        wp.el.className = 'wp marker ' + roleOf(wp);
+        wp.el.textContent = labelOf(wp);
+      }
+      wpsEl.replaceChildren(...list.map((wp) => h('li', {},
+        h('span', { class: 'wp ' + roleOf(wp) }, labelOf(wp)),
+        h('span', { class: 'txt' }, wp.label || fmtLL(wp.ll)),
+        h('button', { type: 'button', title: 'Remove this point', 'aria-label': 'Remove point ' + labelOf(wp), onclick: () => removeWp(wp) }, '×'))));
+      updateHint();
+      if (list.length < 2) { inflight.route?.abort(); renderRoutes([]); return; }
+      loadRoute(list, fit);
+    }
+
+    // GET /v1/route with GeoJSON geometry, turn-by-turn steps and (for two points) alternatives.
+    async function loadRoute(list, fit) {
+      setStatus('routing…');
+      try {
+        const data = await api('route', {
+          profile: profileEl.value,
+          points: list.map((wp) => wp.ll[0].toFixed(6) + ',' + wp.ll[1].toFixed(6)).join(';'),
+          geometry: 'geojson',
+          steps: 'true',
+          alternatives: list.length === 2 ? 'true' : undefined,
+        }, 'route');
+        renderRoutes(data.routes || []);
+        if (fit) fitRoutes();
+        setStatus('ok');
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        renderRoutes([], e.message);
+        showError(e);
+      }
+    }
+    function selectRoute(i) {
+      selected = i;
+      renderRoutes(routes, '', true);
+    }
+    function renderRoutes(list, errMsg, keepSelection) {
+      routes = list;
+      if (!keepSelection) selected = 0;
+      const src = map.getSource && map.getSource('routes');
+      if (src) {
+        src.setData({
+          type: 'FeatureCollection',
+          features: routes.map((r, i) => ({ type: 'Feature', properties: { i, sel: i === selected ? 1 : 0 }, geometry: r.geometry })),
+        });
+      }
+      altsEl.replaceChildren(...(errMsg ? [h('div', { class: 'err' }, errMsg)] : []),
+        ...routes.map((r, i) => h('button', { type: 'button', class: 'alt', 'aria-pressed': String(i === selected), onclick: () => selectRoute(i) },
+          h('b', {}, fmtDur(r.duration_s)), ' · ' + fmtDist(r.distance_m),
+          (r.legs || []).map((l) => l.summary).filter(Boolean).slice(0, 1).map((s) => h('span', { class: 'muted' }, ' · via ' + s)))));
+      const steps = routes[selected] ? routes[selected].legs.flatMap((l) => l.steps || []) : [];
+      stepsEl.replaceChildren(...steps.map((s) => h('li', { onclick: () => map.flyTo({ center: [s.maneuver.lon, s.maneuver.lat], zoom: Math.max(map.getZoom(), 16) }) },
+        h('span', {}, instruction(s)),
+        h('span', { class: 'muted' }, s.distance_m > 0 ? fmtDist(s.distance_m) : ''))));
+    }
+    function fitRoutes() {
+      const b = new maplibregl.LngLatBounds();
+      for (const r of routes) for (const c of (r.geometry.coordinates || [])) b.extend(c);
+      for (const wp of pts()) b.extend(wp.ll);
+      if (b.isEmpty()) return;
+      const left = window.innerWidth > 720 ? $('panel').offsetWidth + 30 : 30;
+      map.fitBounds(b, { padding: { top: 60, bottom: 60, left, right: 60 }, maxZoom: 16 });
+    }
+
+    const verbs = {
+      'new name': 'Continue', continue: 'Continue', turn: 'Turn', merge: 'Merge', fork: 'Keep',
+      'on ramp': 'Take the ramp', 'off ramp': 'Take the exit', 'end of road': 'At the end of the road, turn',
+      roundabout: 'Enter the roundabout', rotary: 'Enter the rotary', 'roundabout turn': 'At the roundabout, turn',
+      'exit roundabout': 'Exit the roundabout', 'exit rotary': 'Exit the rotary', notification: 'Continue',
+    };
+    function instruction(s) {
+      const { type, modifier } = s.maneuver;
+      if (type === 'arrive') return 'Arrive';
+      if (type === 'depart') return s.name ? 'Head along ' + s.name : 'Start';
+      const verb = verbs[type] || type.charAt(0).toUpperCase() + type.slice(1);
+      return [verb, modifier, s.name && 'onto ' + s.name].filter(Boolean).join(' ');
+    }
+
+    // ------------------------------------------------------------ map events
+    map.on('click', (e) => {
+      // Clicks on markers (pick pin, route points) are handled by the markers themselves.
+      if (e.originalEvent.target.closest('.maplibregl-marker')) return;
+      hideResults();
+      if (routeMode) {
+        const r = 6;
+        const hit = map.getLayer('route-line') && map.queryRenderedFeatures(
+          [[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]], { layers: ['route-line'] })
+          .find((f) => f.properties.i !== selected);
+        if (hit) selectRoute(hit.properties.i);
+        else { clearPick(); addWaypoint(e.lngLat); }
+      } else {
+        lookupPoint(e.lngLat);
+      }
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.activeElement !== qEl) hideResults(); });
 
     // Labels use coalesce(name:<lang>, name:latin); switching the language rewrites that expression.
     const isNameLayer = (l) => l.layout && Array.isArray(l.layout['text-field']) &&
@@ -58,13 +485,21 @@
       const langs = (map.getStyle().metadata || {})['map-service:languages'] || ['ru'];
       for (const l of langs) langEl.add(new Option(l, l));
       langEl.addEventListener('change', () => setLanguage(langEl.value));
+
+      map.addSource('routes', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({ id: 'route-casing', type: 'line', source: 'routes',
+        layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['get', 'sel'] },
+        paint: { 'line-color': '#fff', 'line-width': 9, 'line-opacity': 0.9 } });
+      map.addLayer({ id: 'route-line', type: 'line', source: 'routes',
+        layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['get', 'sel'] },
+        paint: { 'line-color': ['case', ['==', ['get', 'sel'], 1], '#1a73e8', '#9aa0a6'], 'line-width': 5 } });
       statusEl.textContent = 'ok';
     });
     map.on('error', (e) => {
-      statusEl.textContent = 'error: ' + ((e.error && e.error.message) || 'see console');
-      statusEl.className = 'error';
+      setStatus('error: ' + ((e.error && e.error.message) || 'see console'), true);
       console.error(e.error || e);
     });
+    updateHint();
   </script>
 </body>
 </html>
