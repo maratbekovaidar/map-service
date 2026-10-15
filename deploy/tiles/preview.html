@@ -6,6 +6,8 @@
   <title>Map preview</title>
   <!-- Opens the map from this service's own style.json, tiles, glyphs and sprites, and
        tries the API on it: search (autocomplete + geocode), address of a clicked point and routing.
+       The Style picker lists GET /v1/styles; ?style=<id> opens one style, and "Make default"
+       calls PUT /v1/styles/default (needs a key from ADMIN_API_KEYS in the key field).
        MapLibre GL JS is vendored (deploy/tiles/vendor): no third-party hosts are contacted.
        Served at /tiles/preview.html. /v1/* needs an API key: add ?key=<API key> or type it into
        the panel (kept in sessionStorage). The key is sent to this service only. -->
@@ -33,6 +35,8 @@
     #status { color: #555; font-size: 12px; }
     #status.error, .err { color: #b00020; }
     #key.missing { border-color: #b00020; }
+    #style { flex: 1; min-width: 0; }
+    #styleDesc { margin: -4px 0 0; }
 
     #results { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow: auto; border: 1px solid #e0e0e0; border-radius: 6px; }
     #results li { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
@@ -100,6 +104,13 @@
     </div>
 
     <div class="row">
+      <label class="muted" for="style">Style</label>
+      <select id="style" aria-label="Map style"><option value="">default</option></select>
+      <button id="defaultBtn" type="button" title="Serve this style at /tiles/style.json to every client (admin key)">Make default</button>
+    </div>
+    <p id="styleDesc" class="muted"></p>
+
+    <div class="row">
       <label class="muted">Language <select id="lang"></select></label>
       <input id="key" type="password" placeholder="API key" aria-label="API key" autocomplete="off">
     </div>
@@ -120,6 +131,8 @@
     const statusEl = $('status'), langEl = $('lang'), qEl = $('q'), resultsEl = $('results'), keyEl = $('key');
     const routeBtn = $('routeBtn'), profileEl = $('profile'), hintEl = $('hint');
     const routeEl = $('route'), wpsEl = $('wps'), altsEl = $('alts'), stepsEl = $('steps');
+    const styleEl = $('style'), defaultBtn = $('defaultBtn'), styleDescEl = $('styleDesc');
+    if (params.get('style')) styleEl.add(new Option(params.get('style'), params.get('style'), true, true));
     keyEl.value = apiKey;
 
     // DOM builder: text always goes in as text nodes, never as HTML (names come from OSM data).
@@ -136,9 +149,11 @@
       statusEl.className = isError ? 'error' : '';
     }
 
+    // ?style=<id> opens that style; without it the default one (style.json).
+    const styleURL = (id) => new URL(id ? 'styles/' + encodeURIComponent(id) + '.json' : 'style.json', location.href).href;
     const map = new maplibregl.Map({
       container: 'map',
-      style: new URL('style.json', location.href).href,
+      style: styleURL(params.get('style')),
       hash: true,
       attributionControl: { compact: true },
       // Send the API key to this service only, never to other hosts.
@@ -150,13 +165,16 @@
 
     // ------------------------------------------------------------------ API
     const inflight = {};
-    // Calls GET /v1/<path>. A newer call with the same `slot` aborts the previous one.
-    async function api(path, query, slot) {
+    // Calls GET /v1/<path> (or another method with a JSON body). A newer call with the
+    // same `slot` aborts the previous one.
+    async function api(path, query, slot, method = 'GET', payload) {
       inflight[slot]?.abort();
       const ctl = inflight[slot] = new AbortController();
       const url = new URL('../v1/' + path, location.href);
       for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== '') url.searchParams.set(k, v);
-      const res = await fetch(url, { headers: apiKey ? { 'X-API-Key': apiKey } : {}, signal: ctl.signal });
+      const headers = apiKey ? { 'X-API-Key': apiKey } : {};
+      if (payload !== undefined) headers['Content-Type'] = 'application/json';
+      const res = await fetch(url, { method, headers, body: payload === undefined ? undefined : JSON.stringify(payload), signal: ctl.signal });
       const body = await res.json().catch(() => null);
       if (!res.ok) {
         const err = new Error((body && body.error && body.error.message) || res.statusText);
@@ -180,6 +198,7 @@
       store.set('apiKey', apiKey);
       keyEl.classList.remove('missing');
       setStatus('ok');
+      loadStyles();
     });
     const lang = () => langEl.value || undefined;
 
@@ -452,6 +471,57 @@
       return [verb, modifier, s.name && 'onto ' + s.name].filter(Boolean).join(' ');
     }
 
+    // ---------------------------------------------------------------- styles
+    // GET /v1/styles fills the picker; without a key only "default" is offered.
+    let styleList = [];
+    function renderStyles(data) {
+      styleList = data.styles || [];
+      const cur = params.get('style') || '';
+      styleEl.replaceChildren(h('option', { value: '' }, 'default (' + (data.default || 'none') + ')'),
+        ...styleList.map((st) => h('option', { value: st.id }, st.name + (st.default ? ' ★' : ''))));
+      styleEl.value = styleList.some((st) => st.id === cur) ? cur : '';
+      describeStyle();
+    }
+    function shownStyleId() {
+      return styleEl.value || (styleList.find((st) => st.default) || {}).id || '';
+    }
+    function describeStyle() {
+      const st = styleList.find((x) => x.id === shownStyleId());
+      styleDescEl.textContent = st ? st.description : '';
+      defaultBtn.disabled = !st || st.default;
+    }
+    async function loadStyles() {
+      if (!apiKey) { describeStyle(); return; }
+      try { renderStyles(await api('styles', {}, 'styles')); }
+      catch (e) { if (e.name !== 'AbortError' && e.status !== 401) showError(e); }
+    }
+    styleEl.addEventListener('change', () => {
+      const id = styleEl.value;
+      if (id) params.set('style', id); else params.delete('style');
+      const q = params.toString();
+      history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
+      setStatus('loading style…');
+      map.setStyle(styleURL(id));
+      describeStyle();
+    });
+    defaultBtn.addEventListener('click', async () => {
+      const id = shownStyleId();
+      if (!id) return;
+      try {
+        renderStyles(await api('styles/default', {}, 'setDefault', 'PUT', { id }));
+        setStatus('default style is now ' + id + ': /tiles/style.json serves it to every client');
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        if (e.status === 401) {
+          keyEl.classList.add('missing');
+          keyEl.focus();
+          setStatus('an admin key (ADMIN_API_KEYS) is required: enter it in the key field', true);
+        } else {
+          setStatus(e.message, true);
+        }
+      }
+    });
+
     // ------------------------------------------------------------ map events
     map.on('click', (e) => {
       // Clicks on markers (pick pin, route points) are handled by the markers themselves.
@@ -481,11 +551,16 @@
       }
     }
 
-    map.on('load', () => {
+    map.once('load', () => {
       const langs = (map.getStyle().metadata || {})['map-service:languages'] || ['ru'];
       for (const l of langs) langEl.add(new Option(l, l));
       langEl.addEventListener('change', () => setLanguage(langEl.value));
-
+      loadStyles();
+    });
+    // Runs for the first style and after every switch: setStyle drops the route
+    // layers and the chosen label language, so both are restored here.
+    map.on('style.load', () => {
+      if (langEl.value) setLanguage(langEl.value);
       map.addSource('routes', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({ id: 'route-casing', type: 'line', source: 'routes',
         layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['get', 'sel'] },
@@ -493,7 +568,8 @@
       map.addLayer({ id: 'route-line', type: 'line', source: 'routes',
         layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['get', 'sel'] },
         paint: { 'line-color': ['case', ['==', ['get', 'sel'], 1], '#1a73e8', '#9aa0a6'], 'line-width': 5 } });
-      statusEl.textContent = 'ok';
+      renderRoutes(routes, '', true);
+      setStatus('ok');
     });
     map.on('error', (e) => {
       setStatus('error: ' + ((e.error && e.error.message) || 'see console'), true);

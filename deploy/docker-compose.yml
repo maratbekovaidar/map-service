@@ -106,9 +106,12 @@ services:
       # Inside the container the data root is always /data (read-only).
       DATA_ROOT: /data
       STATIC_DIR: /app/static
+      # The default map style chosen via PUT /v1/styles/default.
+      STATE_DIR: /state
       GATEWAY_LISTEN_ADDR: ":8080"
     volumes:
       - ${DATA_DIR:?DATA_DIR is exported by the Makefile}:/data:ro
+      - gateway-state:/state
     networks: [edge, internal]
     deploy:
       resources:
@@ -322,6 +325,7 @@ networks:
 volumes:
   caddy-data: {}
   caddy-config: {}
+  gateway-state: {}
   nominatim-pg:
     name: ${COMPOSE_PROJECT_NAME:-mapsvc}-nominatim-pg-${DATA_VERSION:-none}
   nominatim-pg-candidate:

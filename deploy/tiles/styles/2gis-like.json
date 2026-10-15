@@ -869,7 +869,16 @@
         "line-join": "round"
       },
       "paint": {
-        "line-color": "#C9C9C9",
+        "line-color": [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          "secondary",
+          "#EBBE84",
+          "#C9C9C9"
+        ],
         "line-width": {
           "base": 1.2,
           "stops": [
@@ -1237,7 +1246,16 @@
         "line-join": "round"
       },
       "paint": {
-        "line-color": "#F7F7F2",
+        "line-color": [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          "secondary",
+          "#FFEBC7",
+          "#F7F7F2"
+        ],
         "line-width": {
           "base": 1.2,
           "stops": [
@@ -1823,10 +1841,50 @@
           [
             "zoom"
           ],
-          11,
-          "#A4A4A4",
+          9,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            "#F5A22E",
+            "#A4A4A4"
+          ],
+          12,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            "#ED9B35",
+            "#A4A4A4"
+          ],
           13,
-          "#B6B6B6"
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            "#E9A04A",
+            "#B6B6B6"
+          ],
+          14.5,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            "#E19D48",
+            "#B6B6B6"
+          ]
         ],
         "line-width": [
           "interpolate",
@@ -1838,15 +1896,60 @@
             "zoom"
           ],
           8,
-          0.3,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            0.6,
+            0.3
+          ],
           11,
-          0.5,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            1.6,
+            0.5
+          ],
           13,
-          3.5,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            3.6,
+            3.5
+          ],
           19,
-          17,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            17,
+            17
+          ],
           20,
-          18
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            18.5,
+            18
+          ]
         ]
       },
       "source": "openmaptiles",
@@ -2446,7 +2549,48 @@
         "line-join": "round"
       },
       "paint": {
-        "line-color": "#FFFFFF",
+        "line-color": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          9,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            "#FFB046",
+            "#FFFFFF"
+          ],
+          12,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            "#FBCC6F",
+            "#FFFFFF"
+          ],
+          15,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            "#FFDFA0",
+            "#FFFFFF"
+          ]
+        ],
         "line-width": [
           "interpolate",
           [
@@ -2456,14 +2600,61 @@
           [
             "zoom"
           ],
+          8,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            0.5,
+            0
+          ],
           12.5,
-          0,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            2,
+            0
+          ],
           13,
-          2.5,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            2.6,
+            2.5
+          ],
           19,
-          15,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            15.5,
+            15
+          ],
           20,
-          16
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            "secondary",
+            17,
+            16
+          ]
         ]
       },
       "source": "openmaptiles",
@@ -3065,7 +3256,16 @@
         "line-join": "round"
       },
       "paint": {
-        "line-color": "#A4A4A4",
+        "line-color": [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          "secondary",
+          "#E19D48",
+          "#A4A4A4"
+        ],
         "line-width": {
           "base": 1.2,
           "stops": [
@@ -3429,7 +3629,16 @@
         "line-join": "round"
       },
       "paint": {
-        "line-color": "#FFFFFF",
+        "line-color": [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          "secondary",
+          "#FFDFA0",
+          "#FFFFFF"
+        ],
         "line-width": {
           "base": 1.2,
           "stops": [
@@ -3756,12 +3965,13 @@
           "property": "render_min_height",
           "type": "identity"
         },
-        "fill-extrusion-color": "#F7F4E6",
+        "fill-extrusion-color": "#F4F0E1",
         "fill-extrusion-height": {
           "property": "render_height",
           "type": "identity"
         },
-        "fill-extrusion-opacity": 0.9
+        "fill-extrusion-opacity": 0.9,
+        "fill-extrusion-vertical-gradient": false
       },
       "source": "openmaptiles",
       "source-layer": "building",
@@ -4491,7 +4701,7 @@
           ]
         ],
         "text-font": [
-          "Noto Sans Italic"
+          "Noto Sans Regular"
         ],
         "text-max-width": 9,
         "text-offset": [
@@ -4500,6 +4710,7 @@
         ],
         "text-size": 12
       },
+      "minzoom": 15,
       "paint": {
         "text-color": "#1482BD",
         "text-halo-blur": 0.5,
@@ -5099,6 +5310,16 @@
       "type": "symbol"
     }
   ],
+  "light": {
+    "anchor": "viewport",
+    "color": "#FFFFFF",
+    "intensity": 0.25,
+    "position": [
+      1.15,
+      230,
+      40
+    ]
+  },
   "metadata": {
     "map-service:derived-from": "Own colour scheme modelled on the palette of the default 2GIS (2gis.com) theme; no 2GIS icons, fonts or code are used; layers and data wiring: OSM Liberty (maputnik/osm-liberty), BSD licence; design CC-BY 3.0 (Mapbox OSM Bright); data schema OpenMapTiles CC-BY 4.0",
     "map-service:description": "Warm cream land, orange arterials, grey-outlined white streets and brown district labels after the default 2GIS theme.",

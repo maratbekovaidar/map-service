@@ -447,3 +447,51 @@ func TestStyleServesEverythingFromTheGateway(t *testing.T) {
 		}
 	}
 }
+
+// Every style of the catalogue is served, and /tiles/style.json is the
+// default one. (Switching is not exercised: it would change what every client
+// of the stack sees.)
+func TestStyleCatalogue(t *testing.T) {
+	var cat struct {
+		Default string `json:"default"`
+		Styles  []struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			URL     string `json:"url"`
+			Default bool   `json:"default"`
+		} `json:"styles"`
+	}
+	if resp := getJSON(t, "/v1/styles", &cat); resp.StatusCode != http.StatusOK {
+		t.Fatalf("/v1/styles: HTTP %d", resp.StatusCode)
+	}
+	ids := map[string]bool{}
+	for _, st := range cat.Styles {
+		ids[st.ID] = true
+		path := "/tiles/styles/" + st.ID + ".json"
+		if !strings.HasSuffix(st.URL, path) || st.Default != (st.ID == cat.Default) {
+			t.Errorf("%s: url %q default %v", st.ID, st.URL, st.Default)
+		}
+		resp, body := get(t, path, false)
+		var doc struct {
+			Name     string            `json:"name"`
+			Metadata map[string]any    `json:"metadata"`
+			Sources  map[string]any    `json:"sources"`
+			Layers   []json.RawMessage `json:"layers"`
+		}
+		if resp.StatusCode != http.StatusOK || json.Unmarshal(body, &doc) != nil || doc.Name != st.Name || len(doc.Layers) == 0 {
+			t.Errorf("%s: HTTP %d, name %q, %d layers", path, resp.StatusCode, doc.Name, len(doc.Layers))
+		}
+	}
+	for _, id := range []string{"liberty", "positron", "dark-matter", "2gis-like"} {
+		if !ids[id] {
+			t.Errorf("style %s is not installed (got %v)", id, ids)
+		}
+	}
+	_, def := get(t, "/tiles/style.json", false)
+	var doc struct {
+		Metadata map[string]any `json:"metadata"`
+	}
+	if err := json.Unmarshal(def, &doc); err != nil || doc.Metadata["map-service:style-id"] != cat.Default {
+		t.Errorf("/tiles/style.json is %v, the catalogue says the default is %q", doc.Metadata["map-service:style-id"], cat.Default)
+	}
+}

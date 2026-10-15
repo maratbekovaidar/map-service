@@ -29,6 +29,8 @@ type Theme struct {
 	Description string   `json:"description"`
 	DerivedFrom string   `json:"derived-from"`
 	Notes       []string `json:"notes,omitempty"` // free text for humans
+	// Light replaces the style's light (shading of 3D buildings), if set.
+	Light map[string]any `json:"light,omitempty"`
 	// Layers patches existing layers by id.
 	Layers map[string]LayerPatch `json:"layers"`
 	// Insert adds layers, each before an existing layer.
@@ -113,6 +115,9 @@ func ApplyTheme(base []byte, th Theme, lang string) ([]byte, error) {
 	meta[MetaDerivedFrom] = derived
 	style["metadata"] = meta
 	style["name"] = th.Name
+	if th.Light != nil {
+		style["light"] = th.Light
+	}
 
 	layers, _ := style["layers"].([]any)
 	byID := map[string]map[string]any{}

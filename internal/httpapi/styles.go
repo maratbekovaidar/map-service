@@ -138,7 +138,8 @@ func (s *Server) handleStyle(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// GET /tiles/styles/{id}.json - one style by id.
+// GET /tiles/styles/{id}.json - one style by id. Revalidated like the
+// default style, so an edited theme shows up on the next reload.
 func (s *Server) handleStyleByID(w http.ResponseWriter, r *http.Request) error {
 	id, ok := strings.CutSuffix(r.PathValue("file"), ".json")
 	if !ok || !styles.ValidID(id) {
@@ -151,6 +152,6 @@ func (s *Server) handleStyleByID(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError(err)
 	}
-	s.serveStyle(w, r, b, "public, max-age=300")
+	s.serveStyle(w, r, b, "no-cache")
 	return nil
 }

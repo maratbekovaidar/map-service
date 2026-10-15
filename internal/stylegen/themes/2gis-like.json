@@ -6,10 +6,11 @@
   "derived-from": "Own colour scheme modelled on the palette of the default 2GIS (2gis.com) theme; no 2GIS icons, fonts or code are used",
   "notes": [
     "Colours were taken from the default 2GIS MapGL theme (styles.2gis.com export) and mapped from 2GIS's road/area classes to OpenMapTiles ones:",
-    "2GIS Federal -> motorway, Magistral -> trunk/primary (+ links), Main -> secondary/tertiary, Other -> minor, Internal -> service/track.",
+    "2GIS Federal -> motorway, Magistral -> trunk/primary/secondary (+ links), Main -> tertiary, Other -> minor, Internal -> service/track. Secondary counts as Magistral because Astana's big prospects are tagged secondary in OSM.",
     "Liberty's POI icons (Maki) stay; POI label colours follow 2GIS's five category colours (red health, orange food, yellow leisure/lodging, green shops/nature, blue services).",
     "Edit a value, run `make style-assets` and reload the preview (?style=2gis-like). A null paint/layout value removes the property."
   ],
+  "light": {"anchor": "viewport", "color": "#FFFFFF", "intensity": 0.25, "position": [1.15, 230, 40]},
   "layers": {
     "background": {
       "note": "2GIS Country/Region area",
@@ -105,17 +106,17 @@
     "road_link_casing": {"paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 9, "#F5A22E", 12, "#ED9B35", 14.5, "#E19D48"]}},
     "road_link": {"paint": {"line-color": ["interpolate", ["linear"], ["zoom"], 9.1, "#FFB046", 12, "#FBCC6F", 15, "#FFDFA0"]}},
     "road_secondary_tertiary_casing": {
-      "note": "2GIS Main background: below z13 only a thin grey line is drawn",
+      "note": "secondary: 2GIS Magistral background (Astana's big prospects are secondary in OSM); tertiary: 2GIS Main background, a thin grey line below z13",
       "paint": {
-        "line-color": ["interpolate", ["linear"], ["zoom"], 11, "#A4A4A4", 13, "#B6B6B6"],
-        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, 0.3, 11, 0.5, 13, 3.5, 19, 17, 20, 18]
+        "line-color": ["interpolate", ["linear"], ["zoom"], 9, ["match", ["get", "class"], "secondary", "#F5A22E", "#A4A4A4"], 12, ["match", ["get", "class"], "secondary", "#ED9B35", "#A4A4A4"], 13, ["match", ["get", "class"], "secondary", "#E9A04A", "#B6B6B6"], 14.5, ["match", ["get", "class"], "secondary", "#E19D48", "#B6B6B6"]],
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, ["match", ["get", "class"], "secondary", 0.6, 0.3], 11, ["match", ["get", "class"], "secondary", 1.6, 0.5], 13, ["match", ["get", "class"], "secondary", 3.6, 3.5], 19, ["match", ["get", "class"], "secondary", 17, 17], 20, ["match", ["get", "class"], "secondary", 18.5, 18]]
       }
     },
     "road_secondary_tertiary": {
-      "note": "2GIS Main",
+      "note": "secondary: 2GIS Magistral; tertiary: 2GIS Main (white, from z13)",
       "paint": {
-        "line-color": "#FFFFFF",
-        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 12.5, 0, 13, 2.5, 19, 15, 20, 16]
+        "line-color": ["interpolate", ["linear"], ["zoom"], 9, ["match", ["get", "class"], "secondary", "#FFB046", "#FFFFFF"], 12, ["match", ["get", "class"], "secondary", "#FBCC6F", "#FFFFFF"], 15, ["match", ["get", "class"], "secondary", "#FFDFA0", "#FFFFFF"]],
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, ["match", ["get", "class"], "secondary", 0.5, 0], 12.5, ["match", ["get", "class"], "secondary", 2, 0], 13, ["match", ["get", "class"], "secondary", 2.6, 2.5], 19, ["match", ["get", "class"], "secondary", 15.5, 15], 20, ["match", ["get", "class"], "secondary", 17, 16]]
       }
     },
     "road_minor_casing": {
@@ -171,8 +172,8 @@
     "bridge_trunk_primary": {"paint": {"line-color": "#FFDFA0"}},
     "bridge_link_casing": {"paint": {"line-color": "#E19D48"}},
     "bridge_link": {"paint": {"line-color": "#FFDFA0"}},
-    "bridge_secondary_tertiary_casing": {"paint": {"line-color": "#A4A4A4"}},
-    "bridge_secondary_tertiary": {"paint": {"line-color": "#FFFFFF"}},
+    "bridge_secondary_tertiary_casing": {"paint": {"line-color": ["match", ["get", "class"], "secondary", "#E19D48", "#A4A4A4"]}},
+    "bridge_secondary_tertiary": {"paint": {"line-color": ["match", ["get", "class"], "secondary", "#FFDFA0", "#FFFFFF"]}},
     "bridge_street_casing": {"paint": {"line-color": "#A4A4A4"}},
     "bridge_street": {"paint": {"line-color": "#FFFFFF"}},
     "bridge_service_track_casing": {"paint": {"line-color": "#B6B6B6"}},
@@ -192,8 +193,8 @@
     "tunnel_trunk_primary": {"paint": {"line-color": "#FFEBC7"}},
     "tunnel_link_casing": {"paint": {"line-color": "#EBBE84"}},
     "tunnel_link": {"paint": {"line-color": "#FFEBC7"}},
-    "tunnel_secondary_tertiary_casing": {"paint": {"line-color": "#C9C9C9"}},
-    "tunnel_secondary_tertiary": {"paint": {"line-color": "#F7F7F2"}},
+    "tunnel_secondary_tertiary_casing": {"paint": {"line-color": ["match", ["get", "class"], "secondary", "#EBBE84", "#C9C9C9"]}},
+    "tunnel_secondary_tertiary": {"paint": {"line-color": ["match", ["get", "class"], "secondary", "#FFEBC7", "#F7F7F2"]}},
     "tunnel_street_casing": {"paint": {"line-color": "#C9C9C9"}},
     "tunnel_minor": {"paint": {"line-color": "#F7F7F2"}},
     "tunnel_service_track_casing": {"paint": {"line-color": "#CFCFCF"}},
@@ -212,9 +213,9 @@
       }
     },
     "building-3d": {
-      "note": "2GIS Building 3D from z16 (roof #FCFBED, the renderer shades the walls)",
+      "note": "2GIS Building 3D from z16: light roofs, soft walls (low light intensity above, no dark base gradient)",
       "minzoom": 16,
-      "paint": {"fill-extrusion-color": "#F7F4E6", "fill-extrusion-opacity": 0.9}
+      "paint": {"fill-extrusion-color": "#F4F0E1", "fill-extrusion-opacity": 0.9, "fill-extrusion-vertical-gradient": false}
     },
     "boundary_3": {"paint": {"line-color": "#B9B6A5"}},
     "boundary_2_z0-4": {"paint": {"line-color": "#AAAAAA"}},
@@ -275,7 +276,7 @@
         "text-halo-blur": null
       }
     },
-    "poi_transit": {"paint": {"text-color": "#1482BD"}},
+    "poi_transit": {"note": "stops from z15, as on 2GIS", "minzoom": 15, "layout": {"text-font": ["Noto Sans Regular"]}, "paint": {"text-color": "#1482BD"}},
     "road_label": {
       "note": "2GIS Street labels (Main labels)",
       "layout": {"text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 15, 11.5, 19, 14]},

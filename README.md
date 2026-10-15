@@ -25,6 +25,7 @@ updater (Go) ── скачать → вырезать город → OSRM / т
 * [Конфигурация](#конфигурация)
 * [API](#api)
 * [Стиль, тайлы и Flutter-клиент](#стиль-тайлы-и-flutter-клиент)
+* [Стили карты: выбор и дефолтный стиль](#стили-карты-выбор-и-дефолтный-стиль)
 * [Пайплайн данных и обновления](#пайплайн-данных-и-обновления)
 * [Версии компонентов и почему они такие](#версии-компонентов-и-почему-они-такие)
 * [Принятые решения](#принятые-решения)
@@ -83,7 +84,7 @@ curl -s localhost/readyz
 | `make test-integration` | интеграционные тесты против поднятого стека |
 | `make lint` | `go vet` + `golangci-lint` |
 | `make logs S=gateway` / `make ps` | логи сервиса / состояние |
-| `make style-assets` | пересоздать стиль, глифы и спрайты из закреплённых источников (результат закоммичен) |
+| `make style-assets` | пересоздать стили (`deploy/tiles/styles`), глифы и спрайты из закреплённых источников и тем (результат закоммичен) |
 
 ### Исходный экстракт
 
@@ -98,7 +99,7 @@ curl -s localhost/readyz
 | Город / данные | `CITY_NAME`, `CITY_BBOX` (с буфером 10–15 км), `CITY_CENTER`, `OSM_SOURCE_URL`, `EXTRACT_MODE` (`bbox`\|`polygon`), `CITY_POLYGON_FILE`, `EXTRACT_STRATEGY`, `ROUTING_PROFILES`, `LANGUAGES` |
 | Compose | `COMPOSE_PROJECT_NAME`, `COMPOSE_PROFILES` (`scheduler`, `bicycle`), `DATA_DIR` |
 | Публичный адрес | `SITE_ADDRESS`, `PUBLIC_BASE_URL` |
-| Gateway | `API_KEYS`, `AUTH_REQUIRE_FOR_TILES`, `AUTH_DISABLED`, `CORS_ALLOWED_ORIGINS`, `RATE_LIMIT_{KEY,IP,TILES}_{RPS,BURST}`, `TRUSTED_PROXY_CIDRS`, `CACHE_TTL_{REVERSE,GEOCODE,AUTOCOMPLETE,ROUTE}`, `REDIS_ADDR/PASSWORD/DB`, `PHOTON_URL`, `NOMINATIM_URL`, `OSRM_URL_TEMPLATE`, `UPSTREAM_TIMEOUT`, `ROUTE_TIMEOUT`, `MAX_RESULTS_LIMIT`, `MAX_ROUTE_POINTS`, `TILES_CACHE_MAX_AGE`, `GATEWAY_LOG_LEVEL`, таймауты HTTP-сервера, `DATA_VERSION_POLL` |
+| Gateway | `API_KEYS`, `ADMIN_API_KEYS`, `DEFAULT_STYLE`, `AUTH_REQUIRE_FOR_TILES`, `AUTH_DISABLED`, `CORS_ALLOWED_ORIGINS`, `RATE_LIMIT_{KEY,IP,TILES}_{RPS,BURST}`, `TRUSTED_PROXY_CIDRS`, `CACHE_TTL_{REVERSE,GEOCODE,AUTOCOMPLETE,ROUTE}`, `REDIS_ADDR/PASSWORD/DB`, `PHOTON_URL`, `NOMINATIM_URL`, `OSRM_URL_TEMPLATE`, `UPSTREAM_TIMEOUT`, `ROUTE_TIMEOUT`, `MAX_RESULTS_LIMIT`, `MAX_ROUTE_POINTS`, `TILES_CACHE_MAX_AGE`, `GATEWAY_LOG_LEVEL`, таймауты HTTP-сервера, `DATA_VERSION_POLL` |
 | Бэкенды | `NOMINATIM_PASSWORD`, `NOMINATIM_THREADS`, `NOMINATIM_GUNICORN_WORKERS`, `POSTGRES_*`, `NOMINATIM_IMPORT_WIKIPEDIA`, `PHOTON_JAVA_OPTS`, `PHOTON_IMPORT_JAVA_OPTS` |
 | Updater | `UPDATE_CRON` (UTC, по умолчанию `0 3 * * 0`), `DATA_KEEP_VERSIONS` (по умолчанию 2), `NOMINATIM_IMPORT_TIMEOUT`, `SWITCH_TIMEOUT`, `UPDATER_GATEWAY_URL`, `SMOKE_GEOCODE_QUERY`, `SMOKE_GEOCODE_MIN_RESULTS` |
 
@@ -150,7 +151,20 @@ curl -s -H "X-API-Key: $K" \
 curl -s $B/healthz                                  # liveness
 curl -s $B/readyz                                   # все upstream + архив тайлов; 503, если что-то лежит
 curl -s -o tile.mvt -D - $B/tiles/14/11442/5475.mvt # gzip-MVT с ETag и Cache-Control
-curl -s $B/tiles/style.json
+curl -s $B/tiles/style.json                         # дефолтный стиль
+curl -s $B/tiles/styles/positron.json               # конкретный стиль
+```
+
+**Стили** (подробнее — [ниже](#стили-карты-выбор-и-дефолтный-стиль))
+
+```bash
+curl -s -H "X-API-Key: $KEY" $B/v1/styles
+curl -s -X PUT -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"id":"2gis-like"}' $B/v1/styles/default
+```
+```json
+{"default":"2gis-like","styles":[{"id":"2gis-like","name":"2GIS-like","description":"…","url":"http://localhost/tiles/styles/2gis-like.json","default":true},
+ {"id":"dark-matter",…},{"id":"liberty",…},{"id":"positron",…}]}
 ```
 
 Ошибки всегда вида `{"error":{"code":"…","message":"…"}}`:
@@ -158,9 +172,10 @@ curl -s $B/tiles/style.json
 | HTTP | `code` | Когда |
 |---|---|---|
 | 400 | `invalid_argument` | валидация: параметр пропущен/некорректен, неизвестный `profile`/`lang`, точка вне зоны обслуживания |
-| 401 | `unauthorized` | нет или неверный `X-API-Key` |
+| 401 | `unauthorized` | нет или неверный `X-API-Key` (для `PUT /v1/styles/default` — не админский ключ) |
+| 403 | `forbidden` | `PUT /v1/styles/default` при пустом `ADMIN_API_KEYS` |
 | 404 | `not_found`, `no_route` | в точке ничего нет / нет такого эндпоинта / нет маршрута между точками |
-| 405 | `method_not_allowed` | не GET |
+| 405 | `method_not_allowed` | метод не тот (везде GET, кроме `PUT /v1/styles/default`) |
 | 429 | `rate_limited` | пуст token bucket; заголовок `Retry-After` |
 | 502 | `upstream_unavailable` | бэкенд недоступен или ответил мусором |
 | 504 | `upstream_timeout` | бэкенд не ответил вовремя |
@@ -172,10 +187,30 @@ curl -s $B/tiles/style.json
 ## Стиль, тайлы и Flutter-клиент
 
 * Тайлы: `tilemaker` (схема OpenMapTiles) пишет `data/<v>/tiles/city.pmtiles`; gateway раздаёт его встроенным `go-pmtiles` как `/tiles/{z}/{x}/{y}.mvt` (z0–14, дальше клиент делает overzoom). Тайлы всегда хранятся и отдаются сжатыми gzip (`Content-Encoding: gzip`) с `ETag` и `Cache-Control: public, max-age=3600`; Caddy распаковывает их только для клиента, не приславшего `Accept-Encoding: gzip`.
-* Стиль: OSM Liberty (код BSD, дизайн CC-BY), адаптирован `cmd/stylegen`: URL указывают на gateway, сторонние CDN и растровый слой рельефа убраны, Roboto заменён на Noto Sans (OFL), подписи — `coalesce(name:<язык>, name:latin)` с первым языком из `LANGUAGES`. Обе атрибуции заданы в стиле.
+* Стили: OSM Liberty, Positron, Dark Matter (код BSD, дизайн CC-BY) и собственная тема `2gis-like`; все адаптированы `cmd/stylegen`: URL указывают на gateway, сторонние CDN и растровый слой рельефа убраны, Roboto/Metropolis заменены на Noto Sans (OFL), подписи — `coalesce(name:<язык>, name:latin)` с первым языком из `LANGUAGES`. Атрибуции заданы в каждом стиле. Выбор и смена дефолтного стиля — [в следующем разделе](#стили-карты-выбор-и-дефолтный-стиль).
 * Шрифты, спрайты и превью — статические файлы, вшитые в образ gateway (`deploy/tiles`).
 
-Flutter (`maplibre_gl`): `styleString: 'https://maps.example.com/tiles/style.json'`; при `AUTH_REQUIRE_FOR_TILES=true` передавайте `X-API-Key` через механизм заголовков запросов плагина. Смена языка в приложении: заменить выражение `text-field` `["coalesce",["get","name:ru"],["get","name:latin"]]` на другой `name:<язык>` (рабочий пример — `deploy/tiles/preview.html`).
+Flutter (`maplibre_gl`): `styleString: 'https://maps.example.com/tiles/style.json'` (дефолтный стиль; конкретный — `/tiles/styles/<id>.json`, список — `GET /v1/styles`); при `AUTH_REQUIRE_FOR_TILES=true` передавайте `X-API-Key` через механизм заголовков запросов плагина. Смена языка в приложении: заменить выражение `text-field` `["coalesce",["get","name:ru"],["get","name:latin"]]` на другой `name:<язык>` (рабочий пример — `deploy/tiles/preview.html`).
+
+## Стили карты: выбор и дефолтный стиль
+
+Установленные стили лежат в `deploy/tiles/styles/<id>.json` (вшиты в образ gateway как `STATIC_DIR/styles`):
+
+| id | Что это |
+|---|---|
+| `liberty` | OSM Liberty — цветная карта с иконками POI (стиль по умолчанию) |
+| `positron` | светло-серая неконтрастная подложка под маршруты и маркеры |
+| `dark-matter` | тёмная подложка для ночного режима |
+| `2gis-like` | собственная тема на основе Liberty с палитрой дефолтной темы 2GIS: кремовая земля, оранжевые магистрали, белые улицы с серой обводкой, светлые здания, полупрозрачные коричневые подписи районов, цвета подписей POI по категориям, номера домов с z16 |
+
+* `GET /v1/styles` (обычный API-ключ) — список: `id`, `name`, `description`, `url`, `default`.
+* `GET /tiles/styles/<id>.json` — конкретный стиль; `GET /tiles/style.json` — **дефолтный** (его и берёт мобильное приложение). Стили отдаются с `Cache-Control: no-cache` и `ETag`: клиенты видят смену дефолтного стиля (и пересобранную тему) при следующей загрузке стиля, а повторная загрузка без изменений — дешёвый `304`.
+* `PUT /v1/styles/default` с телом `{"id":"<id>"}` — сделать стиль дефолтным для всех клиентов, без перезапуска. Нужен ключ из `ADMIN_API_KEYS` (обычные ключи клиентов не подходят; админские ключи работают и как обычные). Пустой `ADMIN_API_KEYS` выключает эндпоинт (`403`), `AUTH_DISABLED` его не открывает. Выбор сохраняется в томе `gateway-state` (`STATE_DIR=/state`) и переживает рестарты; до первого выбора действует `DEFAULT_STYLE` (по умолчанию `liberty`). Если выбранный стиль пропал из образа, gateway откатывается на `DEFAULT_STYLE`.
+* Страница превью `/tiles/preview.html`: выпадающий список **Style** (из `GET /v1/styles`, нужен ключ в поле API key) переключает стиль на карте, `?style=<id>` открывает конкретный стиль, кнопка **Make default** вызывает `PUT /v1/styles/default` (введите админский ключ).
+
+**Как поиграться со стилем.** Тема — это JSON поверх базового стиля: [`internal/stylegen/themes/2gis-like.json`](internal/stylegen/themes/2gis-like.json). В `layers` — переопределения `paint`/`layout`/`filter`/`minzoom`/`maxzoom` существующих слоёв по `id` (значение `null` удаляет свойство), в `insert` — новые слои с якорем `before`, `"text-field": "{name}"` превращается в выражение с языком. Поменяйте цвет, выполните `make style-assets` и обновите превью (`?style=2gis-like`); пересоберите gateway (`make up`), чтобы стиль попал в образ. Новая тема — новый файл в `internal/stylegen/themes/` с уникальным `id` и `base` (`liberty`, `positron` или `dark-matter`). Генератор падает, если тема ссылается на несуществующий слой или шрифт без глифов, а `test/repo` — если закоммиченный стиль устарел относительно темы. Для визуальной правки удобен [Maputnik](https://maplibre.org/maputnik/): откройте в нём `/tiles/styles/<id>.json`, а найденные значения перенесите в тему.
+
+Тема `2gis-like` использует только цвета, снятые с экспорта дефолтной темы 2GIS (формат 2GIS MapGL несовместим с MapLibre и схемой OpenMapTiles, поэтому слои сопоставлены вручную: Federal → motorway, Magistral → trunk/primary, Main → secondary/tertiary, Other → minor, Internal → service/track). Иконки, шрифты и код 2GIS не используются: иконки POI — открытые Maki из OSM Liberty.
 
 ## Пайплайн данных и обновления
 
@@ -267,7 +302,8 @@ du -sh data/*                         # диск по версиям
 * Замените `API_KEYS` и `NOMINATIM_PASSWORD`. Ключи сравниваются за константное время; лимиты действуют на ключ и на IP (`X-Forwarded-For` принимается только от `TRUSTED_PROXY_CIDRS`, т. е. от Caddy).
 * `/readyz` публичен, но никогда не печатает внутренние адреса и тексты ошибок.
 * `deploy/docker-compose.dev.yml` публикует порты только на `127.0.0.1`; в продакшне не использовать.
-* Страница превью и `style.json` не обращаются ни к каким сторонним хостам; `X-API-Key` для тайлов необязателен (`AUTH_REQUIRE_FOR_TILES`).
+* Смена дефолтного стиля — только с ключом из `ADMIN_API_KEYS`, каждая смена пишется в лог (`default style changed`, без ключа).
+* Страница превью и стили не обращаются ни к каким сторонним хостам; `X-API-Key` для тайлов необязателен (`AUTH_REQUIRE_FOR_TILES`).
 
 ## Тесты
 
@@ -277,9 +313,9 @@ make lint               # go vet + golangci-lint v2.14.0 (бинарник golan
 make up && make test-integration
 ```
 
-Unit-тесты: три клиента upstream на **записанных реальных ответах** (`internal/clients/*/testdata`), хендлеры (валидация, маппинг в DTO, fallback Photon→Nominatim, недоступный Redis, правила кэша, auth, CORS, rate limit, пробы, тайлы, статика), пайплайн на скриптованном Docker (каждый шаг, сбой, внедрённый в каждый из 9 шагов, откат, блокировка, очистка, cron), сервер PMTiles на синтетическом архиве вместе с переключением версии, генератор стиля, а также тесты репозитория (`test/repo`): `.env.example` полон и валиден, все образы закреплены.
+Unit-тесты: три клиента upstream на **записанных реальных ответах** (`internal/clients/*/testdata`), хендлеры (валидация, маппинг в DTO, fallback Photon→Nominatim, недоступный Redis, правила кэша, auth, CORS, rate limit, пробы, тайлы, статика, каталог стилей и смена дефолтного стиля с сохранением), пайплайн на скриптованном Docker (каждый шаг, сбой, внедрённый в каждый из 9 шагов, откат, блокировка, очистка, cron), сервер PMTiles на синтетическом архиве вместе с переключением версии, генератор стилей и движок тем, а также тесты репозитория (`test/repo`): `.env.example` полон и валиден, все образы закреплены, закоммиченные стили ссылаются только на имеющиеся спрайты и шрифты и не отстают от тем.
 
-Интеграционные тесты (`-tags=integration`, `test/integration`): готовность, геокод известного места, reverse центра, автодополнение, маршрут по каждому профилю (polyline декодируется и сверяется с началом/концом), шаги и GeoJSON, ошибки валидации, аутентификация, тайл z14 в центре (gzip, слои, 304) и самодостаточный стиль. Значения по умолчанию соответствуют Астане; переменные `IT_*` позволяют подстроить их под другой город.
+Интеграционные тесты (`-tags=integration`, `test/integration`): готовность, геокод известного места, reverse центра, автодополнение, маршрут по каждому профилю (polyline декодируется и сверяется с началом/концом), шаги и GeoJSON, ошибки валидации, аутентификация, тайл z14 в центре (gzip, слои, 304), самодостаточный стиль и каталог стилей (каждый стиль отдаётся, `/tiles/style.json` совпадает с дефолтным). Значения по умолчанию соответствуют Астане; переменные `IT_*` позволяют подстроить их под другой город.
 
 ## Другой город и другой профиль
 
@@ -300,4 +336,4 @@ Unit-тесты: три клиента upstream на **записанных ре
 
 ## Лицензии и атрибуция
 
-Данные © OpenStreetMap contributors (ODbL). Любая карта на этом стеке обязана показывать **«© OpenStreetMap contributors»** и **«© OpenMapTiles»** (стиль это делает). Сторонние ассеты и их лицензии перечислены в [`deploy/tiles/NOTICE.md`](deploy/tiles/NOTICE.md): OSM Liberty (BSD / CC-BY 3.0 / Maki CC0), Noto Sans (SIL OFL 1.1), MapLibre GL JS (BSD-3), профиль tilemaker (схема CC-BY 4.0). Nominatim — GPL-2.0, Photon — Apache-2.0, OSRM — BSD-2-Clause.
+Данные © OpenStreetMap contributors (ODbL). Любая карта на этом стеке обязана показывать **«© OpenStreetMap contributors»** и **«© OpenMapTiles»** (стиль это делает). Стили Positron и Dark Matter дополнительно показывают «© CARTO» (их дизайн — CC-BY 3.0). Сторонние ассеты и их лицензии перечислены в [`deploy/tiles/NOTICE.md`](deploy/tiles/NOTICE.md): OSM Liberty (BSD / CC-BY 3.0 / Maki CC0), Positron и Dark Matter (BSD / CC-BY 3.0), Noto Sans (SIL OFL 1.1), MapLibre GL JS (BSD-3), профиль tilemaker (схема CC-BY 4.0). Nominatim — GPL-2.0, Photon — Apache-2.0, OSRM — BSD-2-Clause.

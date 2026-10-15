@@ -14,14 +14,20 @@ info:
 
     **Authentication.** `/v1/*` requires an API key in the `X-API-Key` header.
     `/healthz` and `/tiles/*` are public unless `AUTH_REQUIRE_FOR_TILES=true`.
+    `PUT /v1/styles/default` needs an admin key (`ADMIN_API_KEYS`); admin keys
+    are accepted wherever an API key is.
+
+    **Map styles.** Several MapLibre styles are installed (`GET /v1/styles`);
+    `/tiles/style.json` is the default one, which an admin can switch at
+    runtime without restarting clients.
 
     **Rate limiting.** Token bucket per API key and per client IP. When the
     limit is exceeded the service answers `429` with a `Retry-After` header.
 
     **Errors.** Every error has the same shape: `{"error":{"code","message"}}`.
 
-    Data © OpenStreetMap contributors (ODbL). Map style and tile schema ©
-    OpenMapTiles (CC-BY 4.0).
+    Data © OpenStreetMap contributors (ODbL). Tile schema © OpenMapTiles
+    (CC-BY 4.0); every style carries the attribution its design requires.
   license:
     name: ODbL data; code licence is the repository's
     url: https://www.openstreetmap.org/copyright
@@ -35,6 +41,8 @@ tags:
     description: Geocoding and address autocomplete
   - name: routing
     description: Route planning
+  - name: styles
+    description: Map style catalogue and the default style
   - name: tiles
     description: Vector tiles and map style resources
   - name: ops
@@ -168,6 +176,62 @@ paths:
         "502": { $ref: "#/components/responses/Error502" }
         "504": { $ref: "#/components/responses/Error504" }
 
+  /v1/styles:
+    get:
+      tags: [styles]
+      operationId: listStyles
+      summary: List the installed map styles
+      description: |
+        Every style is a MapLibre style JSON served at its `url`
+        (`/tiles/styles/{id}.json`). `default` is the one `/tiles/style.json`
+        serves.
+      responses:
+        "200":
+          description: The catalogue, sorted by id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StylesResponse" }
+        "401": { $ref: "#/components/responses/Error401" }
+        "429": { $ref: "#/components/responses/Error429" }
+
+  /v1/styles/default:
+    put:
+      tags: [styles]
+      operationId: setDefaultStyle
+      summary: Make a style the default (admin)
+      description: |
+        `/tiles/style.json` serves the chosen style to every client from now
+        on; it is sent with `Cache-Control: no-cache`, so map clients pick the
+        change up on their next style load. The choice is persisted
+        (`STATE_DIR`) and survives restarts; until a choice is made
+        `DEFAULT_STYLE` applies. Requires a key from `ADMIN_API_KEYS`; with
+        none configured the endpoint answers `403`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              additionalProperties: false
+              properties:
+                id: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,47}$", example: 2gis-like }
+      responses:
+        "200":
+          description: The catalogue after the switch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StylesResponse" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/Error401" }
+        "403":
+          description: Switching is disabled (`forbidden`, no `ADMIN_API_KEYS`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: forbidden, message: "switching the default style is disabled: set ADMIN_API_KEYS" } }
+        "429": { $ref: "#/components/responses/Error429" }
+
   /tiles/{z}/{x}/{y}.mvt:
     get:
       tags: [tiles]
@@ -200,20 +264,52 @@ paths:
 
   /tiles/style.json:
     get:
-      tags: [tiles]
+      tags: [tiles, styles]
       operationId: getStyle
-      summary: MapLibre style (OSM Liberty, adapted)
+      summary: The default MapLibre style
       description: |
-        Tile, glyph and sprite URLs point back to this service (`PUBLIC_BASE_URL`).
-        The style carries the attribution "© OpenStreetMap contributors" and "© OpenMapTiles".
+        The style chosen with `PUT /v1/styles/default` (else `DEFAULT_STYLE`,
+        `liberty` out of the box). It can change at runtime, so it is sent
+        with `Cache-Control: no-cache` and an `ETag` (revalidation is a cheap
+        `304`). Tile, glyph and sprite URLs point back to this service
+        (`PUBLIC_BASE_URL`); `metadata["map-service:style-id"]` names the style.
       security: [{}, { ApiKeyAuth: [] }]
       responses:
         "200":
           description: Style JSON v8.
+          headers:
+            ETag: { schema: { type: string } }
+            Cache-Control: { schema: { type: string, example: no-cache } }
           content:
             application/json:
               schema: { type: object }
+        "304": { description: Not modified. }
         "401": { $ref: "#/components/responses/Error401" }
+        "404": { $ref: "#/components/responses/Error404" }
+
+  /tiles/styles/{id}.json:
+    get:
+      tags: [tiles, styles]
+      operationId: getStyleById
+      summary: One installed MapLibre style
+      description: |
+        Installed: `liberty` (OSM Liberty), `positron` (light), `dark-matter`
+        (dark), `2gis-like` (palette after 2GIS). See `GET /v1/styles`.
+      security: [{}, { ApiKeyAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,47}$", example: positron } }
+      responses:
+        "200":
+          description: Style JSON v8.
+          headers:
+            ETag: { schema: { type: string } }
+            Cache-Control: { schema: { type: string, example: no-cache } }
+          content:
+            application/json:
+              schema: { type: object }
+        "304": { description: Not modified. }
+        "401": { $ref: "#/components/responses/Error401" }
+        "404": { $ref: "#/components/responses/Error404" }
 
   /tiles/fonts/{fontstack}/{range}.pbf:
     get:
@@ -237,7 +333,7 @@ paths:
     get:
       tags: [tiles]
       operationId: getSprite
-      summary: Sprite sheet (`osm-liberty.json`, `osm-liberty.png`, `osm-liberty@2x.json`, `osm-liberty@2x.png`)
+      summary: Sprite sheet of a style (`<name>.json`, `<name>.png`, `<name>@2x.json`, `<name>@2x.png`; names `osm-liberty`, `positron`, `dark-matter`)
       security: [{}, { ApiKeyAuth: [] }]
       parameters:
         - { name: name, in: path, required: true, schema: { type: string, example: osm-liberty@2x.png } }
@@ -254,7 +350,7 @@ paths:
     get:
       tags: [tiles]
       operationId: getPreview
-      summary: Minimal MapLibre page that displays the map from `style.json`
+      summary: MapLibre page that displays the map and tries the API (style picker, search, routing)
       security: [{}, { ApiKeyAuth: [] }]
       responses:
         "200":
@@ -451,6 +547,7 @@ components:
               enum:
                 - invalid_argument
                 - unauthorized
+                - forbidden
                 - not_found
                 - no_route
                 - method_not_allowed
@@ -577,6 +674,25 @@ components:
         waypoints:
           type: array
           items: { $ref: "#/components/schemas/Waypoint" }
+
+    StyleInfo:
+      type: object
+      required: [id, name, description, url, default]
+      properties:
+        id: { type: string, example: 2gis-like }
+        name: { type: string, example: 2GIS-like }
+        description: { type: string }
+        url: { type: string, format: uri, example: "https://maps.example.com/tiles/styles/2gis-like.json" }
+        default: { type: boolean, description: "Whether /tiles/style.json serves this style." }
+
+    StylesResponse:
+      type: object
+      required: [default, styles]
+      properties:
+        default: { type: string, description: "Id of the default style (empty if none is installed).", example: liberty }
+        styles:
+          type: array
+          items: { $ref: "#/components/schemas/StyleInfo" }
 
     Readiness:
       type: object

@@ -4,6 +4,7 @@ package repo
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,8 @@ import (
 
 	"map-service/internal/config"
 	"map-service/internal/pipeline"
+	"map-service/internal/stylegen"
+	"map-service/internal/styles"
 )
 
 func root(t *testing.T) string {
@@ -52,7 +55,7 @@ func exampleEnv(t *testing.T) map[string]string {
 
 // variables set by compose/Docker or meant for tests, not for the operator.
 var internalOnly = map[string]bool{
-	"DATA_ROOT": true, "STATIC_DIR": true, "GATEWAY_LISTEN_ADDR": true, // fixed inside the gateway container
+	"DATA_ROOT": true, "STATIC_DIR": true, "STATE_DIR": true, "GATEWAY_LISTEN_ADDR": true, // fixed inside the gateway container
 	"REPO_DIR": true, "COMPOSE_FILE_PATH": true, "COMPOSE_ENV_FILE": true, // set by the Makefile/compose for the updater
 	"OSMIUM_BIN": true, "DOCKER_BIN": true, "LOG_FORMAT": true, // tool locations / log style of the updater
 }
@@ -197,6 +200,86 @@ func TestPinnedDetector(t *testing.T) {
 	} {
 		if got := pinned(ref); got != want {
 			t.Errorf("pinned(%q) = %v, want %v", ref, got, want)
+		}
+	}
+}
+
+// Every committed style names itself correctly and references only sprites
+// and fonts the gateway ships, and the themed styles are up to date with
+// internal/stylegen/themes (editing a theme without `make style-assets`
+// fails here).
+func TestCommittedStyles(t *testing.T) {
+	tilesDir := filepath.Join(root(t), "deploy", "tiles")
+	entries, err := os.ReadDir(filepath.Join(tilesDir, "styles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fontDirs, err := os.ReadDir(filepath.Join(tilesDir, "fonts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stacks []string
+	for _, e := range fontDirs {
+		stacks = append(stacks, e.Name())
+	}
+	built := map[string][]byte{}
+	langs := map[string]string{}
+	for _, e := range entries {
+		id, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || !styles.ValidID(id) {
+			t.Errorf("styles/%s: not a valid style file name", e.Name())
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(tilesDir, "styles", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Name     string         `json:"name"`
+			Sprite   string         `json:"sprite"`
+			Metadata map[string]any `json:"metadata"`
+		}
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Errorf("styles/%s: %v", e.Name(), err)
+			continue
+		}
+		if doc.Name == "" || doc.Metadata[stylegen.MetaStyleID] != id || doc.Metadata[stylegen.MetaDescription] == "" {
+			t.Errorf("styles/%s: name/metadata: %q %v", e.Name(), doc.Name, doc.Metadata)
+		}
+		if l, _ := doc.Metadata[stylegen.MetaLanguages].([]any); len(l) > 0 {
+			langs[id], _ = l[0].(string)
+		}
+		if doc.Sprite != "" {
+			name, ok := strings.CutPrefix(doc.Sprite, stylegen.PlaceholderBaseURL+"/tiles/sprites/")
+			if !ok {
+				t.Errorf("styles/%s: sprite %q is not served by the gateway", e.Name(), doc.Sprite)
+			}
+			for _, suffix := range stylegen.SpriteSuffixes {
+				if _, err := os.Stat(filepath.Join(tilesDir, "sprites", name+suffix)); err != nil {
+					t.Errorf("styles/%s: %v", e.Name(), err)
+				}
+			}
+		}
+		if err := stylegen.CheckFonts(b, stacks); err != nil {
+			t.Errorf("styles/%s: %v", e.Name(), err)
+		}
+		built[id] = b
+	}
+	if _, ok := built["liberty"]; !ok {
+		t.Error("styles/liberty.json (the built-in DEFAULT_STYLE) is missing")
+	}
+	themes, err := stylegen.Themes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range themes {
+		want, err := stylegen.ApplyTheme(built[th.Base], th, langs[th.Base])
+		if err != nil {
+			t.Errorf("theme %s: %v", th.ID, err)
+			continue
+		}
+		if string(want) != string(built[th.ID]) {
+			t.Errorf("deploy/tiles/styles/%s.json is stale: run `make style-assets` after editing internal/stylegen/themes/%s.json", th.ID, th.ID)
 		}
 	}
 }

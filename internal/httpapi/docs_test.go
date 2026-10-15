@@ -137,18 +137,25 @@ func TestDocsAreNotBehindAPIKeys(t *testing.T) {
 }
 
 // TestSpecPathsAreRouted keeps the documentation honest: every concrete path
-// of the spec must exist in the gateway (templated tile paths are covered by
-// the tile tests).
+// and method of the spec must exist in the gateway (templated tile paths are
+// covered by the tile tests).
 func TestSpecPathsAreRouted(t *testing.T) {
 	hs := newHarness(t, nil, nil)
 	spec := parseSpec(t, api.OpenAPI)
-	for p := range spec.Paths {
+	for p, item := range spec.Paths {
 		if strings.Contains(p, "{") {
 			continue
 		}
-		rec := hs.do("GET", p)
-		if rec.Code == http.StatusMethodNotAllowed || strings.Contains(rec.Body.String(), "no such endpoint") {
-			t.Errorf("spec documents GET %s but the gateway has no such route (%d)", p, rec.Code)
+		ops, _ := item.(map[string]any)
+		for method := range ops {
+			method = strings.ToUpper(method)
+			if method != "GET" && method != "PUT" && method != "POST" && method != "DELETE" {
+				continue
+			}
+			rec := hs.do(method, p)
+			if rec.Code == http.StatusMethodNotAllowed || strings.Contains(rec.Body.String(), "no such endpoint") {
+				t.Errorf("spec documents %s %s but the gateway has no such route (%d)", method, p, rec.Code)
+			}
 		}
 	}
 }

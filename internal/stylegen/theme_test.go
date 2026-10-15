@@ -114,6 +114,7 @@ func baseForThemes(t *testing.T) []byte {
 func TestApplyTheme(t *testing.T) {
 	th, err := ParseTheme([]byte(`{
 	  "id": "warm", "base": "liberty", "name": "Warm", "description": "d", "derived-from": "own",
+	  "light": {"anchor": "viewport", "intensity": 0.25},
 	  "layers": {
 	    "background": {"paint": {"background-color": "#F1EEE0"}},
 	    "poi": {"note": "n", "minzoom": 15, "layout": {"text-font": ["Noto Sans Bold"], "text-field": "{name}"}, "paint": {"text-color": "#123"}},
@@ -144,6 +145,9 @@ func TestApplyTheme(t *testing.T) {
 	if style["name"] != "Warm" || meta[MetaStyleID] != "warm" || meta[MetaDescription] != "d" ||
 		!strings.HasPrefix(meta[MetaDerivedFrom].(string), "own; ") || meta[MetaLanguages] == nil {
 		t.Errorf("identity/metadata: %v %v", style["name"], meta)
+	}
+	if light, _ := style["light"].(map[string]any); light["intensity"] != 0.25 {
+		t.Errorf("light: %v", style["light"])
 	}
 	if layerByID(t, style, "background")["paint"].(map[string]any)["background-color"] != "#F1EEE0" {
 		t.Error("paint override not applied")
