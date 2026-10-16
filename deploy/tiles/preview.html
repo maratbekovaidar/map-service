@@ -10,10 +10,17 @@
        calls PUT /v1/styles/default (needs a key from ADMIN_API_KEYS in the key field).
        MapLibre GL JS is vendored (deploy/tiles/vendor): no third-party hosts are contacted.
        Served at /tiles/preview.html. /v1/* needs an API key: add ?key=<API key> or type it into
-       the panel (kept in sessionStorage). The key is sent to this service only. -->
+       the panel (kept in sessionStorage). The key is sent to this service only.
+       Trips (/v1/trips, through Caddy): with A and B set, "Start a trip" creates one and the page
+       plays the driver - it drives the route with simulated GPS, sends batches of positions and
+       follows the new route when the service builds one ("Detour" drives somewhere else first).
+       The watcher's link, #trip=<id>&watch=<token>, opens this page as the watcher: it follows
+       the event stream (fetch with Authorization; the token stays in the fragment, which never
+       reaches a server, and is removed from the address bar). -->
   <link rel="stylesheet" href="vendor/maplibre-gl.css">
   <style>
     html, body { height: 100%; margin: 0; font: 14px/1.4 system-ui, sans-serif; color: #202124; }
+    [hidden] { display: none !important; } /* display rules below would override the attribute */
     #map { position: absolute; inset: 0; }
     body.route-mode .maplibregl-canvas-container.maplibregl-interactive { cursor: crosshair; }
 
@@ -72,6 +79,22 @@
       #steps { max-height: 18vh; }
     }
 
+    /* trips */
+    #trip { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid #eee; padding-top: 8px; }
+    #tripHead { font-weight: 600; }
+    #tripInfo { font-size: 13px; }
+    #tripInfo .eta { font-size: 16px; font-weight: 600; }
+    #tripInfo .off { color: #b06000; font-weight: 600; }
+    #watchLink { word-break: break-all; }
+    body.watch-mode .plan { display: none !important; }
+    body.detour-pick .maplibregl-canvas-container.maplibregl-interactive { cursor: crosshair; }
+    .car { box-sizing: border-box; width: 22px; height: 22px; border-radius: 50%; background: #1a73e8;
+           border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+    .car::after { content: ''; position: absolute; left: 50%; top: -11px; margin-left: -5px;
+                  border: 5px solid transparent; border-bottom: 8px solid #1a73e8; }
+    .car.watched { background: #0b8043; }
+    .car.watched::after { border-bottom-color: #0b8043; }
+
     .pop { min-width: 180px; padding-right: 8px; }
     .pop-name { font-weight: 600; }
     .pop-actions { display: flex; gap: 6px; margin-top: 6px; }
@@ -81,13 +104,13 @@
 </head>
 <body>
   <div id="panel">
-    <div class="row">
+    <div class="row plan">
       <input id="q" type="search" placeholder="Search address or place" aria-label="Search address or place"
              autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="results">
     </div>
-    <ul id="results" role="listbox" hidden></ul>
+    <ul id="results" class="plan" role="listbox" hidden></ul>
 
-    <div class="row">
+    <div class="row plan">
       <button id="routeBtn" type="button" aria-pressed="false">Route</button>
       <select id="profile" aria-label="Routing profile" title="Routing profile">
         <option>car</option>
@@ -95,12 +118,34 @@
       </select>
       <button id="clearBtn" type="button" title="Remove the route, markers and search results">Clear</button>
     </div>
-    <p id="hint" class="muted"></p>
+    <p id="hint" class="muted plan"></p>
 
-    <div id="route" hidden>
+    <div id="route" class="plan" hidden>
       <ol id="wps"></ol>
       <div id="alts"></div>
+      <button id="tripStartBtn" type="button" disabled
+              title="POST /v1/trips from A to B (car), then drive it with simulated GPS">Start a trip A → B</button>
       <ol id="steps"></ol>
+    </div>
+
+    <div id="trip" hidden>
+      <div class="row"><span id="tripHead">Trip</span><span id="tripConn" class="muted"></span></div>
+      <div id="tripInfo"></div>
+      <div class="row driver-only">
+        <button id="driveBtn" type="button" aria-pressed="false">Drive</button>
+        <label class="muted">speed <select id="simMult" aria-label="Simulation speed">
+          <option value="1">1×</option><option value="2">2×</option><option value="5" selected>5×</option><option value="10">10×</option>
+        </select></label>
+        <label class="muted"><input id="simNoise" type="checkbox" checked> GPS noise</label>
+      </div>
+      <div class="row driver-only">
+        <button id="detourBtn" type="button" aria-pressed="false" title="Click the map: the car drives there instead of following the route">Detour</button>
+        <button id="finishBtn" type="button">Finish</button>
+        <button id="cancelBtn" type="button">Cancel</button>
+      </div>
+      <div class="driver-only muted">Watcher's link (the token is in the #fragment):
+        <a id="watchLink" target="_blank" rel="noopener"></a></div>
+      <div class="row watcher-only" hidden><button id="unwatchBtn" type="button">Stop watching</button></div>
     </div>
 
     <div class="row">
@@ -124,7 +169,21 @@
     const store = {
       get(k) { try { return sessionStorage.getItem(k) || ''; } catch { return ''; } },
       set(k, v) { try { sessionStorage.setItem(k, v); } catch { /* storage may be blocked */ } },
+      del(k) { try { sessionStorage.removeItem(k); } catch { /* storage may be blocked */ } },
     };
+    // A watcher's link: #trip=<id>&watch=<token>. Taken out of the address bar at once (the
+    // map keeps its position in the hash) and kept for this tab only.
+    let watchTarget = null;
+    {
+      const frag = new URLSearchParams(location.hash.slice(1));
+      if (frag.get('trip') && frag.get('watch')) {
+        watchTarget = { id: frag.get('trip'), token: frag.get('watch') };
+        store.set('watch', JSON.stringify(watchTarget));
+        history.replaceState(null, '', location.pathname + location.search);
+      } else {
+        try { watchTarget = JSON.parse(store.get('watch') || 'null'); } catch { watchTarget = null; }
+      }
+    }
     let apiKey = params.get('key') || store.get('apiKey');
 
     const $ = (id) => document.getElementById(id);
@@ -401,6 +460,7 @@
         h('span', { class: 'txt' }, wp.label || fmtLL(wp.ll)),
         h('button', { type: 'button', title: 'Remove this point', 'aria-label': 'Remove point ' + labelOf(wp), onclick: () => removeWp(wp) }, '×'))));
       updateHint();
+      tripStartBtn.disabled = !(route.start && route.end);
       if (list.length < 2) { inflight.route?.abort(); renderRoutes([]); return; }
       loadRoute(list, fit);
     }
@@ -522,11 +582,393 @@
       }
     });
 
+    // ----------------------------------------------------------------- trips
+    // Geometry on the client: haversine distances, bearings and positions along a path.
+    const R = 6371008.8, rad = (d) => d * Math.PI / 180, deg = (r) => r * 180 / Math.PI;
+    function distM(a, b) {
+      const h = Math.sin(rad(b[1] - a[1]) / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(rad(b[0] - a[0]) / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(Math.min(1, h)));
+    }
+    function bearingDeg(a, b) {
+      const y = Math.sin(rad(b[0] - a[0])) * Math.cos(rad(b[1]));
+      const x = Math.cos(rad(a[1])) * Math.sin(rad(b[1])) - Math.sin(rad(a[1])) * Math.cos(rad(b[1])) * Math.cos(rad(b[0] - a[0]));
+      return (deg(Math.atan2(y, x)) + 360) % 360;
+    }
+    // Encoded polyline (precision 6 for trip routes) to [lon, lat] pairs.
+    function decodePolyline(str, precision = 6) {
+      const f = 10 ** precision, out = [];
+      let i = 0, lat = 0, lon = 0;
+      const next = () => {
+        let r = 0, sh = 0, b;
+        do { b = str.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32);
+        return r & 1 ? ~(r >> 1) : r >> 1;
+      };
+      while (i < str.length) { lat += next(); lon += next(); out.push([lon / f, lat / f]); }
+      return out;
+    }
+    function makePath(coords) {
+      const cum = [0];
+      for (let i = 1; i < coords.length; i++) cum.push(cum[i - 1] + distM(coords[i - 1], coords[i]));
+      return { coords, cum, length: cum[cum.length - 1] };
+    }
+    // Position and direction `s` metres along a path.
+    function along(path, s) {
+      const c = path.coords, cum = path.cum;
+      if (c.length < 2) return { ll: c[0], brg: 0 };
+      s = Math.max(0, Math.min(s, path.length));
+      let i = 1;
+      while (i < c.length - 1 && cum[i] < s) i++;
+      const seg = cum[i] - cum[i - 1], t = seg > 0 ? (s - cum[i - 1]) / seg : 0;
+      return { ll: [c[i - 1][0] + (c[i][0] - c[i - 1][0]) * t, c[i - 1][1] + (c[i][1] - c[i - 1][1]) * t], brg: bearingDeg(c[i - 1], c[i]) };
+    }
+    // Distance along the path of the point nearest to ll (flat projection, fine for a city).
+    function project(path, ll) {
+      const kx = 111320 * Math.cos(rad(ll[1])), ky = 110540;
+      let best = { d: Infinity, s: 0 };
+      for (let i = 1; i < path.coords.length; i++) {
+        const a = path.coords[i - 1], b = path.coords[i];
+        const ax = (a[0] - ll[0]) * kx, ay = (a[1] - ll[1]) * ky, bx = (b[0] - ll[0]) * kx, by = (b[1] - ll[1]) * ky;
+        const dx = bx - ax, dy = by - ay, d2 = dx * dx + dy * dy;
+        const t = d2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / d2)) : 0;
+        const d = Math.hypot(ax + t * dx, ay + t * dy);
+        if (d < best.d) best = { d, s: path.cum[i - 1] + t * (path.cum[i] - path.cum[i - 1]) };
+      }
+      return best.s;
+    }
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const tripEl = $('trip'), tripHeadEl = $('tripHead'), tripInfoEl = $('tripInfo'), tripConnEl = $('tripConn');
+    const tripStartBtn = $('tripStartBtn'), driveBtn = $('driveBtn'), detourBtn = $('detourBtn'), watchLinkEl = $('watchLink');
+    // What is drawn: the trip's current route and the car. Kept here so that a style switch
+    // (which drops the layers) can redraw them.
+    const tripDraw = { route: null, car: null };
+    function drawTripRoute(coords) {
+      tripDraw.route = coords;
+      const src = map.getSource && map.getSource('trip-route');
+      if (src) src.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords || [] } });
+    }
+    function placeCar(ll, brg, watched) {
+      if (!tripDraw.car) {
+        tripDraw.car = new maplibregl.Marker({ element: h('div', { class: 'car' + (watched ? ' watched' : '') }), rotationAlignment: 'map' });
+        tripDraw.car.setLngLat(ll).addTo(map);
+      }
+      tripDraw.car.setLngLat(ll);
+      if (brg != null) tripDraw.car.setRotation(brg);
+    }
+    function fitTrip() {
+      const b = new maplibregl.LngLatBounds();
+      for (const c of tripDraw.route || []) b.extend(c);
+      if (b.isEmpty()) return;
+      const left = window.innerWidth > 720 ? $('panel').offsetWidth + 30 : 30;
+      map.fitBounds(b, { padding: { top: 60, bottom: 60, left, right: 60 }, maxZoom: 16 });
+    }
+    function etaText(p) {
+      if (!p) return '';
+      const at = new Date(Date.now() + p.remaining_s * 1000);
+      return fmtDist(p.remaining_m) + ' · ' + fmtDur(p.remaining_s) + ' · ~' + at.toTimeString().slice(0, 5);
+    }
+    function showTrip(info) {
+      // info: { status, version, progress, note }
+      const ended = info.status && info.status !== 'active';
+      tripHeadEl.textContent = ended ? 'Trip ' + info.status : 'Trip · route v' + (info.version || 1);
+      tripInfoEl.replaceChildren(...[
+        ended ? h('div', { class: 'eta' }, info.status === 'arrived' ? 'Arrived' : 'Ended (' + info.status + ')')
+          : info.progress ? h('div', { class: 'eta' }, etaText(info.progress)) : null,
+        info.progress && info.progress.off_route && !ended ? h('div', { class: 'off' }, 'Off the route: a new one is on its way') : null,
+        info.note ? h('div', { class: 'muted' }, info.note) : null].filter(Boolean));
+    }
+    // Calls /v1/trips/{id}<path> with a trip token.
+    async function tripCall(id, path, token, method = 'GET', payload) {
+      const headers = { Authorization: 'Bearer ' + token };
+      if (payload !== undefined) headers['Content-Type'] = 'application/json';
+      const res = await fetch(new URL('../v1/trips/' + encodeURIComponent(id) + path, location.href),
+        { method, headers, body: payload === undefined ? undefined : JSON.stringify(payload) });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = new Error((body && body.error && body.error.message) || res.statusText);
+        err.status = res.status;
+        err.code = body && body.error && body.error.code;
+        throw err;
+      }
+      return body;
+    }
+
+    // ---- the driver: a simulated car
+    // Drives the current path at `speed` m/s. Simulated time runs `mult` times faster than real
+    // time and starts two hours back, so that its fixes never look like they come from the
+    // future (the service rejects fixes > 10 min ahead of its clock).
+    const sim = {
+      trip: null, version: 1, path: null, s: 0, mode: 'route', // route | detour | self
+      running: false, speed: 12, t: 0, seq: 0, buf: [], lastSend: 0, sending: false, ended: false,
+      timer: null, picking: false,
+    };
+    function simSetPath(coords, mode, fromLL) {
+      sim.path = makePath(coords);
+      sim.mode = mode;
+      sim.s = fromLL ? project(sim.path, fromLL) : 0;
+    }
+    async function startTrip() {
+      if (!route.start || !route.end) return;
+      const origin = { lon: route.start.ll[0], lat: route.start.ll[1] }, destination = { lon: route.end.ll[0], lat: route.end.ll[1] };
+      setStatus('creating the trip…');
+      try {
+        const t = await api('trips', {}, 'trip', 'POST', { origin, destination });
+        setDriving(false); // a previous trip of this tab stops here
+        clearAll();
+        setRouteMode(false);
+        for (const id of ['driveBtn', 'detourBtn', 'finishBtn', 'cancelBtn']) $(id).disabled = false;
+        detourBtn.setAttribute('aria-pressed', 'false');
+        sim.trip = { id: t.trip.id, driver: t.driver_token, watch: t.watch_token, dest: [destination.lon, destination.lat] };
+        Object.assign(sim, { version: t.route.version, running: false, seq: 0, buf: [], ended: false, t: Date.now() - 2 * 3600e3 });
+        const coords = decodePolyline(t.route.geometry);
+        simSetPath(coords, 'route');
+        drawTripRoute(coords);
+        placeCar(coords[0], coords.length > 1 ? bearingDeg(coords[0], coords[1]) : 0, false);
+        const link = location.origin + location.pathname + '#trip=' + t.trip.id + '&watch=' + t.watch_token;
+        watchLinkEl.href = link;
+        watchLinkEl.textContent = 'open';
+        tripEl.hidden = false;
+        document.body.classList.add('driving');
+        showTrip({ status: 'active', version: t.route.version, progress: { remaining_m: t.route.distance_m, remaining_s: t.route.duration_s },
+          note: 'Press Drive. Trip ' + t.trip.id });
+        fitTrip();
+        setStatus('trip created');
+      } catch (e) { showError(e); }
+    }
+    tripStartBtn.addEventListener('click', startTrip);
+
+    function setDriving(on) {
+      sim.running = on && !sim.ended;
+      driveBtn.setAttribute('aria-pressed', String(sim.running));
+      driveBtn.textContent = sim.running ? 'Pause' : 'Drive';
+      clearInterval(sim.timer);
+      if (sim.running) { sim.lastTick = performance.now(); sim.timer = setInterval(simTick, 200); }
+    }
+    driveBtn.addEventListener('click', () => setDriving(!sim.running));
+
+    // One step of the simulation: one fix per simulated second.
+    function simTick() {
+      const now = performance.now(), mult = Number($('simMult').value);
+      const dtSim = (now - sim.lastTick) / 1000 * mult;
+      sim.lastTick = now;
+      sim.acc = (sim.acc || 0) + dtSim;
+      while (sim.acc >= 1) {
+        sim.acc -= 1;
+        sim.t += 1000;
+        const atEnd = sim.s >= sim.path.length;
+        if (atEnd && sim.mode === 'detour') { driveOnFromDetour(); }
+        const moving = !atEnd;
+        if (moving) sim.s = Math.min(sim.path.length, sim.s + sim.speed);
+        const p = along(sim.path, sim.s);
+        placeCar(p.ll, p.brg, false);
+        const noise = $('simNoise').checked ? 4 : 0;
+        const ll = noise ? [p.ll[0] + gauss() * noise / (111320 * Math.cos(rad(p.ll[1]))), p.ll[1] + gauss() * noise / 110540] : p.ll;
+        sim.buf.push({ seq: ++sim.seq, ts: new Date(sim.t).toISOString(), lat: +ll[1].toFixed(7), lon: +ll[0].toFixed(7),
+          accuracy: noise ? 8 : 5, speed: moving ? sim.speed : 0, heading: +p.brg.toFixed(1) });
+      }
+      // A batch every 4 simulated seconds, but not more than once a second (the per-trip limit).
+      if (!sim.sending && sim.buf.length && now - sim.lastSend >= Math.max(1000, 4000 / mult)) sendBatch();
+    }
+
+    // After a detour the car heads for the destination by a route of its own choosing (the
+    // gateway's); it switches to the trip's route as soon as the service sends a new one.
+    let detourBusy = false;
+    async function driveOnFromDetour() {
+      if (detourBusy) return;
+      detourBusy = true;
+      const from = along(sim.path, sim.s).ll;
+      try {
+        const data = await api('route', { profile: 'car', geometry: 'geojson',
+          points: from.map((v) => v.toFixed(6)).join(',') + ';' + sim.trip.dest.map((v) => v.toFixed(6)).join(',') }, 'simRoute');
+        if (sim.mode === 'detour') simSetPath(data.routes[0].geometry.coordinates, 'self');
+      } catch (e) { showError(e); } finally { detourBusy = false; }
+    }
+
+    async function sendBatch() {
+      sim.sending = true;
+      sim.lastSend = performance.now();
+      const batch = sim.buf.splice(0, 100);
+      try {
+        const r = await tripCall(sim.trip.id, '/positions', sim.trip.driver, 'POST', { known_route_version: sim.version, positions: batch });
+        if (r.route && r.route.version !== sim.version) {
+          // The service built a new route: drive it from where the car is now.
+          sim.version = r.route.version;
+          const coords = decodePolyline(r.route.geometry);
+          simSetPath(coords, 'route', along(sim.path, sim.s).ll);
+          drawTripRoute(coords);
+          detourBtn.setAttribute('aria-pressed', 'false');
+        }
+        showTrip({ status: r.status, version: r.route_version, progress: r.progress,
+          note: 'seq ' + r.last_seq + (r.route ? ' · new route: ' + r.route.reason : '') });
+        if (r.status !== 'active') endDriving(r.status);
+        setStatus('ok');
+      } catch (e) {
+        if (e.code === 'trip_ended') { endDriving('ended'); }
+        else { sim.buf.unshift(...batch); setStatus('positions: ' + e.message + ' (will retry)', true); }
+      } finally { sim.sending = false; }
+    }
+    function endDriving(status) {
+      sim.ended = true;
+      setDriving(false);
+      for (const id of ['driveBtn', 'detourBtn', 'finishBtn', 'cancelBtn']) $(id).disabled = true;
+      if (status !== 'ended') showTrip({ status });
+    }
+
+    detourBtn.addEventListener('click', () => {
+      sim.picking = !sim.picking;
+      detourBtn.setAttribute('aria-pressed', String(sim.picking));
+      document.body.classList.toggle('detour-pick', sim.picking);
+      if (sim.picking) setStatus('click the map where the car should drive instead');
+    });
+    async function startDetour(lngLat) {
+      sim.picking = false;
+      document.body.classList.remove('detour-pick');
+      const from = along(sim.path, sim.s).ll;
+      try {
+        const data = await api('route', { profile: 'car', geometry: 'geojson',
+          points: from.map((v) => v.toFixed(6)).join(',') + ';' + lngLat.lng.toFixed(6) + ',' + lngLat.lat.toFixed(6) }, 'simRoute');
+        simSetPath(data.routes[0].geometry.coordinates, 'detour');
+        setStatus('detour: the car leaves the route');
+        if (!sim.running) setDriving(true);
+      } catch (e) { detourBtn.setAttribute('aria-pressed', 'false'); showError(e); }
+    }
+    for (const [id, what] of [['finishBtn', 'finish'], ['cancelBtn', 'cancel']]) {
+      $(id).addEventListener('click', async () => {
+        try {
+          const r = await tripCall(sim.trip.id, '/' + what, sim.trip.driver, 'POST');
+          endDriving(r.status);
+        } catch (e) { setStatus(e.message, true); }
+      });
+    }
+
+    // ---- the watcher: the event stream, read with fetch (EventSource cannot send Authorization)
+    const watch = { last: null, ctl: null, prev: 0, anim: 0 };
+    function animateCar(points, fallback) {
+      // Plays the batch's points over the time since the previous batch (capped), so the car
+      // moves smoothly instead of jumping every few seconds.
+      cancelAnimationFrame(watch.anim);
+      const now = performance.now();
+      const dur = Math.min(Math.max(watch.prev ? now - watch.prev : 1000, 300), 6000);
+      watch.prev = now;
+      const pts = points.length ? points.map((p) => [p.lon, p.lat]) : [fallback];
+      const start = tripDraw.car ? [tripDraw.car.getLngLat().lng, tripDraw.car.getLngLat().lat] : pts[0];
+      const path = makePath([start, ...pts]);
+      const t0 = performance.now();
+      const step = () => {
+        const k = Math.min(1, (performance.now() - t0) / dur);
+        const p = along(path, k * path.length);
+        placeCar(p.ll, path.length > 1 ? p.brg : null, true);
+        if (k < 1) watch.anim = requestAnimationFrame(step);
+      };
+      step();
+    }
+    // Returns true when the trip has ended (no reconnecting then).
+    function onTripEvent(ev) {
+      if (ev.id !== undefined) watch.last = ev.id;
+      const d = JSON.parse(ev.data);
+      switch (ev.event) {
+        case 'snapshot': {
+          const coords = decodePolyline(d.route.geometry);
+          drawTripRoute(coords);
+          const at = d.position ? [d.position.lon, d.position.lat] : coords[0];
+          placeCar(at, d.position && d.position.heading != null ? d.position.heading : null, true);
+          fitTrip();
+          showTrip({ status: d.trip.status, version: d.route.version, progress: d.progress, note: 'Watching trip ' + d.trip.id });
+          return d.trip.status !== 'active';
+        }
+        case 'route':
+          drawTripRoute(decodePolyline(d.geometry));
+          showTrip({ status: 'active', version: d.version, note: 'New route: ' + d.reason });
+          return false;
+        case 'position':
+          animateCar(d.points, [d.position.lon, d.position.lat]);
+          showTrip({ status: 'active', version: d.route_version, progress: d.progress,
+            note: 'Updated ' + new Date().toTimeString().slice(0, 8) });
+          return false;
+        case 'status':
+          showTrip({ status: d.status });
+          return true;
+      }
+      return false;
+    }
+    async function follow() {
+      document.body.classList.add('watch-mode');
+      tripEl.hidden = false;
+      for (const e of document.querySelectorAll('.driver-only')) e.hidden = true;
+      for (const e of document.querySelectorAll('.watcher-only')) e.hidden = false;
+      tripHeadEl.textContent = 'Trip';
+      let retry = 3000;
+      for (;;) {
+        watch.ctl = new AbortController();
+        const headers = { Authorization: 'Bearer ' + watchTarget.token, Accept: 'text/event-stream' };
+        if (watch.last !== null) headers['Last-Event-ID'] = String(watch.last);
+        tripConnEl.textContent = ' · connecting…';
+        let res;
+        try {
+          res = await fetch(new URL('../v1/trips/' + encodeURIComponent(watchTarget.id) + '/events', location.href), { headers, signal: watch.ctl.signal });
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+          tripConnEl.textContent = ' · offline, retrying';
+          await sleep(retry);
+          continue;
+        }
+        if (res.status === 204) { tripConnEl.textContent = ''; return; } // ended, nothing more to come
+        if (!res.ok) {
+          const b = await res.json().catch(() => null);
+          const msg = (b && b.error && b.error.message) || res.statusText;
+          if (res.status === 429 || res.status >= 500) { tripConnEl.textContent = ' · ' + msg + ', retrying'; await sleep(5000); continue; }
+          tripConnEl.textContent = '';
+          showTrip({ note: msg });
+          tripHeadEl.textContent = 'Cannot watch this trip';
+          return;
+        }
+        tripConnEl.textContent = ' · live';
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buf = '', ev = {}, ended = false;
+        try {
+          while (!ended) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += value;
+            let i;
+            while ((i = buf.indexOf('\n')) >= 0) {
+              const line = buf.slice(0, i).replace(/\r$/, '');
+              buf = buf.slice(i + 1);
+              if (line === '') {
+                if (ev.event && ev.data !== undefined && onTripEvent(ev)) ended = true;
+                ev = {};
+              } else if (!line.startsWith(':')) {
+                const c = line.indexOf(':'), field = c < 0 ? line : line.slice(0, c);
+                const val = c < 0 ? '' : line.slice(c + 1).replace(/^ /, '');
+                if (field === 'id') ev.id = Number(val);
+                else if (field === 'event') ev.event = val;
+                else if (field === 'data') ev.data = ev.data === undefined ? val : ev.data + '\n' + val;
+                else if (field === 'retry') retry = Number(val) || retry;
+              }
+            }
+          }
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+        }
+        if (ended) { tripConnEl.textContent = ''; return; }
+        tripConnEl.textContent = ' · reconnecting…';
+        await sleep(retry);
+      }
+    }
+    $('unwatchBtn').addEventListener('click', () => {
+      watch.ctl?.abort();
+      store.del('watch');
+      location.reload();
+    });
+
     // ------------------------------------------------------------ map events
     map.on('click', (e) => {
       // Clicks on markers (pick pin, route points) are handled by the markers themselves.
       if (e.originalEvent.target.closest('.maplibregl-marker')) return;
       hideResults();
+      if (sim.picking) { startDetour(e.lngLat); return; }
+      if (document.body.classList.contains('watch-mode')) return;
       if (routeMode) {
         const r = 6;
         const hit = map.getLayer('route-line') && map.queryRenderedFeatures(
@@ -569,6 +1011,12 @@
         layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['get', 'sel'] },
         paint: { 'line-color': ['case', ['==', ['get', 'sel'], 1], '#1a73e8', '#9aa0a6'], 'line-width': 5 } });
       renderRoutes(routes, '', true);
+      map.addSource('trip-route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({ id: 'trip-route-casing', type: 'line', source: 'trip-route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#fff', 'line-width': 9, 'line-opacity': 0.9 } });
+      map.addLayer({ id: 'trip-route-line', type: 'line', source: 'trip-route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#0b8043', 'line-width': 5 } });
+      if (tripDraw.route) drawTripRoute(tripDraw.route);
       setStatus('ok');
     });
     map.on('error', (e) => {
@@ -576,6 +1024,7 @@
       console.error(e.error || e);
     });
     updateHint();
+    if (watchTarget) follow();
   </script>
 </body>
 </html>

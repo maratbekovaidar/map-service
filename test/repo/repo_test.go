@@ -358,3 +358,30 @@ func TestCaddyLogsRedactAPIKeys(t *testing.T) {
 		t.Error("deploy/tiles/preview.html no longer reads the key from ?key=: update the Caddyfile redaction (and this test) to the new parameter")
 	}
 }
+
+// The preview page plays a trip's driver and watcher. Trip tokens must never
+// reach a URL the server sees (and logs): the watcher's link carries the token
+// in the #fragment, the page takes it out of the address bar, and tokens only
+// travel in the Authorization header.
+func TestPreviewKeepsTripTokensOutOfURLs(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(root(t), "deploy", "tiles", "preview.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(b)
+	for _, want := range []string{
+		"new URLSearchParams(location.hash.slice(1))",                         // the link is read from the fragment...
+		"history.replaceState(null, '', location.pathname + location.search)", // ...and removed from the address bar
+		"'#trip=' + t.trip.id + '&watch=' + t.watch_token",                    // links are built with a fragment
+		"Authorization: 'Bearer ' + token",                                    // tokens go in a header
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("preview.html no longer contains %q", want)
+		}
+	}
+	for _, bad := range []string{"params.get('watch')", "params.get('token')", "searchParams.set('watch'", "?watch=", "?trip="} {
+		if strings.Contains(page, bad) {
+			t.Errorf("preview.html puts a trip token into a query string (%q)", bad)
+		}
+	}
+}
