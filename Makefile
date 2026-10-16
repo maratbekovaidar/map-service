@@ -70,6 +70,22 @@ update-data: init-data ## Rebuild the data without downtime and switch to it (sa
 test: ## Unit tests
 	go test -race -count=1 ./...
 
+# The store tests need PostgreSQL: a throwaway container of the trips-db image
+# (taken from the compose file, so the versions cannot drift apart).
+TRIPS_DB_IMAGE    := $(shell sed -n 's/^ *image: *\(postgres:[^ ]*\).*/\1/p' deploy/docker-compose.yml | head -n1)
+TEST_TRIPS_DB_PORT ?= 15434
+TEST_TRIPS_DB_NAME := $(PROJECT)-test-trips-db
+
+.PHONY: test-trips-db
+test-trips-db: ## Trip store tests against a throwaway PostgreSQL container
+	@docker rm -f $(TEST_TRIPS_DB_NAME) >/dev/null 2>&1 || true
+	docker run -d --rm --name $(TEST_TRIPS_DB_NAME) -e POSTGRES_PASSWORD=test \
+	  -p 127.0.0.1:$(TEST_TRIPS_DB_PORT):5432 --tmpfs /var/lib/postgresql $(TRIPS_DB_IMAGE) >/dev/null
+	@for i in $$(seq 1 60); do docker exec $(TEST_TRIPS_DB_NAME) pg_isready -h 127.0.0.1 -U postgres -q && break; sleep 0.5; done
+	@TRIPS_TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:$(TEST_TRIPS_DB_PORT)/postgres?sslmode=disable \
+	  go test -race -count=1 -v ./internal/trips/store/...; status=$$?; \
+	  docker rm -f $(TEST_TRIPS_DB_NAME) >/dev/null; exit $$status
+
 comma := ,
 # Integration tests read these from the environment (defaults match Astana).
 export CITY_CENTER ROUTING_PROFILES

@@ -51,7 +51,7 @@ updater (Go) ── скачать → вырезать город → OSRM / т
 
 | | |
 |---|---|
-| RAM, весь стек в простое | **≈ 0,7–1,0 ГиБ** (Nominatim 160–420 МиБ, Photon ≈ 540 МиБ, OSRM ≈ 30–50 МиБ каждый, Redis ≈ 6 МиБ, gateway ≈ 15 МиБ) |
+| RAM, весь стек в простое | **≈ 0,7–1,0 ГиБ** (Nominatim 160–420 МиБ, Photon ≈ 540 МиБ, OSRM ≈ 30–50 МиБ каждый, Redis ≈ 6 МиБ, gateway ≈ 15 МиБ, trips-db ≈ 35 МиБ) |
 | RAM, пик при обновлении | **≈ 4,5 ГиБ** суммарно; из них 3,5 ГиБ — `osmium extract` на файле страны 224 МБ (см. [ограничения](#известные-ограничения)); сам импорт Nominatim пикует на ≈ 550 МиБ |
 | Диск на версию данных | **≈ 0,9 ГБ**: 146 МБ в `data/<v>` (экстракт города 7 МБ, OSRM 107 МБ для car+foot, тайлы 6 МБ, Photon 25 МБ) и ≈ 750 МБ том PostgreSQL Nominatim. По умолчанию хранятся две версии (≈ 1,8 ГБ) плюс кэш экстракта страны (224 МБ). |
 | Полная сборка данных | **≈ 4–6 минут** (extract 15–20 с, OSRM 19 с, тайлы 5 с, импорт Nominatim 80–100 с, импорт Photon 30 с, smoke 15 с, переключение 90 с) |
@@ -60,7 +60,7 @@ updater (Go) ── скачать → вырезать город → OSRM / т
 
 ```bash
 cp .env.example .env
-$EDITOR .env           # минимум: API_KEYS, NOMINATIM_PASSWORD, SITE_ADDRESS, PUBLIC_BASE_URL
+$EDITOR .env           # минимум: API_KEYS, NOMINATIM_PASSWORD, TRIPS_DB_PASSWORD, SITE_ADDRESS, PUBLIC_BASE_URL
 make init-data         # скачивает экстракт и собирает все данные (≈ 5 мин для Астаны)
 make up                # поднимает стек
 curl -s localhost/readyz
@@ -81,6 +81,7 @@ curl -s localhost/readyz
 | `make up-dev` | запуск с пробросом портов бэкендов на `127.0.0.1` для отладки (никогда на публичном сервере) |
 | `make update-data` | пересобрать данные и переключиться на них; тот же пайплайн, что у `init-data` |
 | `make test` | unit-тесты (`-race`) |
+| `make test-trips-db` | тесты хранилища поездок на временном контейнере PostgreSQL |
 | `make test-integration` | интеграционные тесты против поднятого стека |
 | `make lint` | `go vet` + `golangci-lint` |
 | `make logs S=gateway` / `make ps` | логи сервиса / состояние |
@@ -101,6 +102,7 @@ curl -s localhost/readyz
 | Публичный адрес | `SITE_ADDRESS`, `PUBLIC_BASE_URL` |
 | Gateway | `API_KEYS`, `ADMIN_API_KEYS`, `DEFAULT_STYLE`, `AUTH_REQUIRE_FOR_TILES`, `AUTH_DISABLED`, `CORS_ALLOWED_ORIGINS`, `RATE_LIMIT_{KEY,IP,TILES}_{RPS,BURST}`, `TRUSTED_PROXY_CIDRS`, `CACHE_TTL_{REVERSE,GEOCODE,AUTOCOMPLETE,ROUTE}`, `REDIS_ADDR/PASSWORD/DB`, `PHOTON_URL`, `NOMINATIM_URL`, `OSRM_URL_TEMPLATE`, `UPSTREAM_TIMEOUT`, `ROUTE_TIMEOUT`, `MAX_RESULTS_LIMIT`, `MAX_ROUTE_POINTS`, `TILES_CACHE_MAX_AGE`, `GATEWAY_LOG_LEVEL`, таймауты HTTP-сервера, `DATA_VERSION_POLL` |
 | Бэкенды | `NOMINATIM_PASSWORD`, `NOMINATIM_THREADS`, `NOMINATIM_GUNICORN_WORKERS`, `POSTGRES_*`, `NOMINATIM_IMPORT_WIKIPEDIA`, `PHOTON_JAVA_OPTS`, `PHOTON_IMPORT_JAVA_OPTS` |
+| База поездок | `TRIPS_DB_PASSWORD`, `TRIPS_DB_SHARED_BUFFERS` |
 | Updater | `UPDATE_CRON` (UTC, по умолчанию `0 3 * * 0`), `DATA_KEEP_VERSIONS` (по умолчанию 2), `NOMINATIM_IMPORT_TIMEOUT`, `SWITCH_TIMEOUT`, `UPDATER_GATEWAY_URL`, `SMOKE_GEOCODE_QUERY`, `SMOKE_GEOCODE_MIN_RESULTS` |
 
 Gateway не стартует с пустым `API_KEYS` (кроме явного `AUTH_DISABLED=true` — только для локальной разработки) и сообщает **обо всех** ошибках конфигурации сразу.
@@ -266,16 +268,18 @@ Flutter (`maplibre_gl`): `styleString: 'https://maps.example.com/tiles/style.jso
 | MapLibre GL JS | 5.24.0 | только для `preview.html`, вложен в репозиторий. 6.x (на момент закрепления вышел 3 дня назад) — только ES-модули с отдельным воркером |
 | Swagger UI | 5.32.15 (swagger-ui-dist) | только для `/docs`, вложен в репозиторий, закреплён по sha256 (Apache-2.0). Берётся не самый свежий релиз (5.33.x вышел недавно), а предыдущая линия, которой уже больше месяца |
 | Caddy | 2.11.7-alpine | последний 2.x |
+| PostgreSQL (trips-db) | `postgres:18.6-alpine` | последний патч 18.x; id поездок — `uuidv7()` (есть с 18-й версии). Образы 18+ хранят данные в `/var/lib/postgresql/18/docker`, поэтому том монтируется в `/var/lib/postgresql` |
 | Redis | 8.10.2-alpine | последний 8.x. Замечание: Redis 8 лицензирован ещё и по AGPLv3 / RSALv2 / SSPL; если это важно — используйте `valkey/valkey` |
 | osmium-tool | 1.19.1 (libosmium 2.23.1, protozero 1.8.2), собирается из тегов | в Alpine нет пакета `osmium-tool` |
 | Docker CLI / Compose в updater | Alpine 3.24: 29.8.2 / 5.1.4 | проверено против старого движка (API 1.41) |
-| robfig/cron v3.0.1, go-redis v9.23.0, miniredis v2.40.0, x/time v0.16.0 | | разбор cron, клиент Redis, тесты, token bucket |
+| robfig/cron v3.0.1, go-redis v9.23.0, miniredis v2.40.0, x/time v0.16.0, pgx v5.10.0 | | разбор cron, клиент Redis, тесты, token bucket, драйвер PostgreSQL |
 
 ## Принятые решения
 
 * **Изолированная сеть.** `internal` — Docker-сеть с `internal: true`: Nominatim, Photon, OSRM и Redis не выходят в интернет и ничего не публикуют. Наружу смотрит только Caddy (80/443). `updater` подключён к обеим сетям, потому что скачивает данные.
 * **Один том Nominatim на версию данных** (`<проект>-nominatim-pg-<версия>`): новый импорт не трогает базу, которая обслуживает трафик, откат — это переключение симлинка, очистка — `docker volume rm`.
-* **Исключение по доступу к Postgres.** Gateway никогда не подключается к PostgreSQL. Только контейнер *импорта* Photon делает это по приватной сети под ролью `nominatim` с паролем `NOMINATIM_PASSWORD`.
+* **Исключение по доступу к Postgres.** Gateway никогда не подключается к PostgreSQL. К базе Nominatim подключается только контейнер *импорта* Photon делает это по приватной сети под ролью `nominatim` с паролем `NOMINATIM_PASSWORD`.
+* **База поездок отдельно от карты.** `trips-db` (PostgreSQL) хранит поездки, все версии их маршрутов, каждую присланную позицию с вердиктом трекера и журнал событий для наблюдателей. Это пользовательские данные: updater её не трогает, а бэкапить её надо (см. эксплуатацию), в отличие от кэша Redis и тома Nominatim. Схема — миграции `internal/trips/store/migrations`, их применяет сам сервис поездок при старте (параллельные запуски сериализует advisory lock). Все записи одной поездки идут под блокировкой её строки, поэтому события поездки фиксируются строго по порядку их id, и переподключившийся наблюдатель по `Last-Event-ID` ничего не теряет.
 * **Gateway сам следит за живой версией.** Он идёт по симлинку `data/current` (тайлы — на каждый запрос, метка версии — раз в 10 с), поэтому переключение не требует перезапуска gateway.
 * **Стратегия `smart`** сохраняет целиком мультиполигоны (озёра, землепользование) и границы через край bbox; цена — больше памяти (см. ограничения) и экстракт, чей bbox шире города, поэтому tilemaker получает явный `bounding_box`.
 * **Разбор query.** `net/url` в Go молча выбрасывает пары query, содержащие `;`; `points=lon,lat;lon,lat` просто пропадал бы. Gateway разбирает сырой query сам.
@@ -291,7 +295,8 @@ cat data/current/manifest.json        # из чего собрана живая 
 du -sh data/*                         # диск по версиям
 ```
 
-* Бэкапы: данные воспроизводимы из OSM, поэтому сохранять стоит `.env` и — чтобы не перестраивать большой город часами — каталог `data/` вместе с томом `…-nominatim-pg-<текущая версия>`.
+* Бэкапы: данные карты воспроизводимы из OSM, поэтому сохранять стоит `.env` и — чтобы не перестраивать большой город часами — каталог `data/` вместе с томом `…-nominatim-pg-<текущая версия>`.
+* База поездок не воспроизводима, её бэкап обязателен: `docker compose -p mapsvc -f deploy/docker-compose.yml --env-file .env exec -T trips-db pg_dump -U trips -Fc trips > trips-$(date +%F).dump` (восстановление — `pg_restore`). Данные лежат в томе `…_trips-db`.
 * Том Caddy (`…_caddy-data`) хранит TLS-сертификаты; сохраняйте его между перезапусками.
 * Ручной откат: `ln -sfn <старая версия> data/current` и `docker compose … up -d --force-recreate osrm-car osrm-foot photon nominatim`.
 * Логи всех контейнеров ротируются (10 МБ × 3).
@@ -299,7 +304,7 @@ du -sh data/*                         # диск по версиям
 ## Безопасность
 
 * Сервисы `scheduler` и `updater` монтируют `/var/run/docker.sock`, что **эквивалентно root на хосте**. Они исполняют только доверенный код из этого репозитория, но если это неприемлемо — уберите `scheduler` из `COMPOSE_PROFILES` и запускайте `make update-data` из таймера под вашим контролем.
-* Замените `API_KEYS` и `NOMINATIM_PASSWORD`. Ключи сравниваются за константное время; лимиты действуют на ключ и на IP (`X-Forwarded-For` принимается только от `TRUSTED_PROXY_CIDRS`, т. е. от Caddy).
+* Замените `API_KEYS`, `NOMINATIM_PASSWORD` и `TRIPS_DB_PASSWORD`. Ключи сравниваются за константное время; лимиты действуют на ключ и на IP (`X-Forwarded-For` принимается только от `TRUSTED_PROXY_CIDRS`, т. е. от Caddy).
 * `/readyz` публичен, но никогда не печатает внутренние адреса и тексты ошибок.
 * `deploy/docker-compose.dev.yml` публикует порты только на `127.0.0.1`; в продакшне не использовать.
 * Смена дефолтного стиля — только с ключом из `ADMIN_API_KEYS`, каждая смена пишется в лог (`default style changed`, без ключа).
@@ -308,12 +313,13 @@ du -sh data/*                         # диск по версиям
 ## Тесты
 
 ```bash
-make test               # 229 тестовых случаев (161 тест + подтесты), -race
+make test               # 302 тестовых случая (232 теста + подтесты), -race
+make test-trips-db      # тесты хранилища поездок на временном PostgreSQL (в make test они пропускаются)
 make lint               # go vet + golangci-lint v2.14.0 (бинарник golangci-lint, либо `go run`)
 make up && make test-integration
 ```
 
-Unit-тесты: три клиента upstream на **записанных реальных ответах** (`internal/clients/*/testdata`), хендлеры (валидация, маппинг в DTO, fallback Photon→Nominatim, недоступный Redis, правила кэша, auth, CORS, rate limit, пробы, тайлы, статика, каталог стилей и смена дефолтного стиля с сохранением), пайплайн на скриптованном Docker (каждый шаг, сбой, внедрённый в каждый из 9 шагов, откат, блокировка, очистка, cron), сервер PMTiles на синтетическом архиве вместе с переключением версии, генератор стилей и движок тем, а также тесты репозитория (`test/repo`): `.env.example` полон и валиден, все образы закреплены, закоммиченные стили ссылаются только на имеющиеся спрайты и шрифты и не отстают от тем.
+Unit-тесты: три клиента upstream на **записанных реальных ответах** (`internal/clients/*/testdata`), хендлеры (валидация, маппинг в DTO, fallback Photon→Nominatim, недоступный Redis, правила кэша, auth, CORS, rate limit, пробы, тайлы, статика, каталог стилей и смена дефолтного стиля с сохранением), пайплайн на скриптованном Docker (каждый шаг, сбой, внедрённый в каждый из 9 шагов, откат, блокировка, очистка, cron), сервер PMTiles на синтетическом архиве вместе с переключением версии, генератор стилей и движок тем, трекер поездок на синтетических треках (сход с маршрута, дублёр, разворот, двор у старта, пауза в фоне, прибытие, темп перестроений), хранилище поездок на настоящем PostgreSQL (миграции, в том числе параллельные, блокировка поездки, повтор батча, снимок для наблюдателя, истечение и очистка, `LISTEN`/`NOTIFY` с переподключением), а также тесты репозитория (`test/repo`): `.env.example` полон и валиден, все образы закреплены, закоммиченные стили ссылаются только на имеющиеся спрайты и шрифты и не отстают от тем.
 
 Интеграционные тесты (`-tags=integration`, `test/integration`): готовность, геокод известного места, reverse центра, автодополнение, маршрут по каждому профилю (polyline декодируется и сверяется с началом/концом), шаги и GeoJSON, ошибки валидации, аутентификация, тайл z14 в центре (gzip, слои, 304), самодостаточный стиль и каталог стилей (каждый стиль отдаётся, `/tiles/style.json` совпадает с дефолтным). Значения по умолчанию соответствуют Астане; переменные `IT_*` позволяют подстроить их под другой город.
 

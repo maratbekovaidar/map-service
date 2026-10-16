@@ -3,7 +3,7 @@
 #
 # Networks
 #   edge     - caddy <-> gateway. The only network with internet access.
-#   internal - gateway, redis, nominatim, photon, osrm-*. `internal: true`
+#   internal - gateway, redis, nominatim, photon, osrm-*, trips-db. `internal: true`
 #              means NO egress at all: the map backends physically cannot
 #              call external map APIs, and publish no ports to the host.
 #
@@ -215,6 +215,36 @@ services:
     volumes:
       - ${DATA_DIR}/${DATA_VERSION:-none}/osrm/bicycle:/data:ro
 
+  # --------------------------------------------------------------- trips ----
+  # Trip tracking database: trips, routes, positions and events. Unlike the
+  # map data it is user data that the updater never rebuilds - back it up.
+  trips-db:
+    image: postgres:18.6-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: trips
+      POSTGRES_DB: trips
+      POSTGRES_PASSWORD: ${TRIPS_DB_PASSWORD:?set TRIPS_DB_PASSWORD in .env}
+    command: [postgres, -c, "shared_buffers=${TRIPS_DB_SHARED_BUFFERS:-128MB}"]
+    volumes:
+      # PostgreSQL 18+ images keep PGDATA in /var/lib/postgresql/18/docker and
+      # expect the volume one level up, so a major upgrade can sit beside it.
+      - trips-db:/var/lib/postgresql
+    networks: [internal]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    healthcheck:
+      # Over TCP: while the entrypoint initialises a new database the server
+      # listens on the unix socket only and would look ready too early.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "trips", "-d", "trips"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   # ----------------------------------------------------------- scheduler ----
   # Runs the updater on UPDATE_CRON. Mounts the docker socket (root-equivalent
   # on the host) - drop the "scheduler" profile if that is not acceptable and
@@ -326,6 +356,7 @@ volumes:
   caddy-data: {}
   caddy-config: {}
   gateway-state: {}
+  trips-db: {}
   nominatim-pg:
     name: ${COMPOSE_PROJECT_NAME:-mapsvc}-nominatim-pg-${DATA_VERSION:-none}
   nominatim-pg-candidate:
