@@ -283,3 +283,74 @@ func TestCommittedStyles(t *testing.T) {
 		}
 	}
 }
+
+// Caddy logs the whole request - URI and all headers - on every access and
+// error line, and redacts only Cookie/Authorization by default. The API key
+// travels in X-API-Key and, for the preview page, in ?key=, so the Caddyfile
+// must redact both in every log block and must do it without mangling the rest
+// of the URI (the `query` filter drops pairs containing ";", i.e. the route
+// "points" parameter). This checks the committed rules, not Caddy itself.
+func TestCaddyLogsRedactAPIKeys(t *testing.T) {
+	read := func(parts ...string) string {
+		b, err := os.ReadFile(filepath.Join(append([]string{root(t)}, parts...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	caddyfile := read("deploy", "Caddyfile")
+
+	// Access lines go through the site `log`, error lines through the global
+	// one: both must use the filter snippet, and none may fall back to plain json.
+	logBlocks := len(regexp.MustCompile(`(?m)^\s*log\s*\{`).FindAllString(caddyfile, -1))
+	imports := len(regexp.MustCompile(`(?m)^\s*import\s+redact_api_keys\s*$`).FindAllString(caddyfile, -1))
+	if logBlocks != 2 || imports != logBlocks {
+		t.Errorf("Caddyfile has %d log blocks and %d `import redact_api_keys`: the global and the site log must each apply the redaction", logBlocks, imports)
+	}
+	if regexp.MustCompile(`(?m)^\s*format\s+json\b`).MatchString(caddyfile) {
+		t.Error("Caddyfile: a log block uses plain `format json`, which logs API keys; use `format filter` with `import redact_api_keys`")
+	}
+
+	if !regexp.MustCompile(`(?m)^\s*request>headers>X-Api-Key\s+(delete|hash|replace\s+\S+)\s*$`).MatchString(caddyfile) {
+		t.Error("Caddyfile: the X-Api-Key request header (canonical form of X-API-Key) is not redacted in logs")
+	}
+
+	// The same pattern must cover the URI and the Referer (which echoes the preview URL).
+	rule := regexp.MustCompile(`(?m)^\s*request>(uri|headers>Referer)\s+regexp\s+"([^"]+)"\s+"([^"]*)"\s*$`)
+	var pattern, repl string
+	seen := map[string]bool{}
+	for _, m := range rule.FindAllStringSubmatch(caddyfile, -1) {
+		seen[m[1]] = true
+		if pattern != "" && (pattern != m[2] || repl != m[3]) {
+			t.Errorf("Caddyfile: the uri and Referer redaction rules differ")
+		}
+		pattern, repl = m[2], m[3]
+	}
+	if !seen["uri"] || !seen["headers>Referer"] {
+		t.Fatalf("Caddyfile: want a regexp redaction rule for both request>uri and request>headers>Referer, found %v", seen)
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("Caddyfile redaction pattern %q: %v", pattern, err)
+	}
+	for in, want := range map[string]string{
+		"/tiles/preview.html?key=SECRET":              "/tiles/preview.html?key=REDACTED",
+		"/v1/geocode?q=a&key=SECRET&x=1":              "/v1/geocode?q=a&key=REDACTED&x=1",
+		"/v1/route/car?points=1,2;3,4&key=SECRET":     "/v1/route/car?points=1,2;3,4&key=REDACTED",
+		"/v1/route/car?points=1,2;3,4&steps=true":     "/v1/route/car?points=1,2;3,4&steps=true", // ";" pairs survive
+		"/v1/x?a=1;key=SECRET;b=2":                    "/v1/x?a=1;key=REDACTED;b=2",
+		"http://h/tiles/preview.html?key=SECRET#frag": "http://h/tiles/preview.html?key=REDACTED#frag",
+		"/v1/x?monkey=1&keys=2":                       "/v1/x?monkey=1&keys=2", // only the parameter named exactly "key"
+		"/v1/reverse?lat=51.1&lon=71.4":               "/v1/reverse?lat=51.1&lon=71.4",
+	} {
+		if got := re.ReplaceAllString(in, repl); got != want {
+			t.Errorf("redact(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	// The preview page is what puts the key into the URL; if it ever reads
+	// another parameter, the pattern above has to follow.
+	if !strings.Contains(read("deploy", "tiles", "preview.html"), "params.get('key')") {
+		t.Error("deploy/tiles/preview.html no longer reads the key from ?key=: update the Caddyfile redaction (and this test) to the new parameter")
+	}
+}

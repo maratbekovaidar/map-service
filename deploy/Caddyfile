@@ -1,9 +1,34 @@
 # SITE_ADDRESS comes from .env:
 #   maps.example.com -> automatic HTTPS (Let's Encrypt), ports 80/443 open
 #   :80              -> plain HTTP (local / behind another TLS terminator)
+
+# Log lines carry the full request URI and all request headers, and Caddy
+# redacts only Cookie/Authorization by default. API keys arrive in the
+# X-API-Key header (logged under its canonical name X-Api-Key) and, for
+# deploy/tiles/preview.html, in the ?key= query parameter - neither may reach
+# the logs. Referer is covered too: it can echo the preview URL.
+# The query is redacted with a regexp rather than the `query` filter: that one
+# re-parses the query and silently drops every pair containing ";", and
+# routing uses points=lon,lat;lon,lat.
+# Applied twice (below): access lines go through the site `log`, but error
+# lines (e.g. "dial tcp: ... no such host" with the whole request) go through
+# the default logger, which only the global `log` configures.
+(redact_api_keys) {
+	wrap json
+	request>headers>X-Api-Key replace REDACTED
+	request>uri regexp "([?&;]key=)[^&;#]*" "${1}REDACTED"
+	request>headers>Referer regexp "([?&;]key=)[^&;#]*" "${1}REDACTED"
+}
+
 {
 	# The admin API is not needed and must not be reachable.
 	admin off
+
+	log {
+		format filter {
+			import redact_api_keys
+		}
+	}
 }
 
 {$SITE_ADDRESS::80} {
@@ -28,6 +53,8 @@
 
 	log {
 		output stdout
-		format json
+		format filter {
+			import redact_api_keys
+		}
 	}
 }
