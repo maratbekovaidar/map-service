@@ -1,5 +1,6 @@
-// Package geo holds the small geometry helpers shared by the gateway and the
-// updater: bounding boxes, polyline encoding and slippy-map tile numbers.
+// Package geo holds the small geometry helpers shared by the gateway, the
+// updater and the trip tracker: bounding boxes, polyline encoding, slippy-map
+// tile numbers, distances and positions along a line.
 package geo
 
 import (

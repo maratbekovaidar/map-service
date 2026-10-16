@@ -185,3 +185,157 @@ func TestHealth(t *testing.T) {
 		t.Error("an error answer must fail the health check")
 	}
 }
+
+func TestRouteBearingsRadiusesAnnotations(t *testing.T) {
+	// Recorded with bearings=90,45; radiuses=100; annotations=duration,distance.
+	c, req := fixture(t, "route_car_bearings_annotations.json", 200)
+	res, err := c.Route(context.Background(), RouteParams{
+		Profile: "car", Points: a2b, Geometry: Polyline6, Annotations: true,
+		Bearings: []Bearing{{Value: 450, Range: 45}, {}},
+		Radiuses: []float64{100, 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := req.URL.Query()
+	if q.Get("bearings") != "90,45;" || q.Get("radiuses") != "100;" || q.Get("annotations") != "duration,distance" {
+		t.Errorf("query = %v", q)
+	}
+
+	r := res.Routes[0]
+	pts, err := r.Geometry.Points(Polyline6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	durs := r.SegmentDurations()
+	if len(durs) != len(pts)-1 {
+		t.Fatalf("%d segment durations for %d points", len(durs), len(pts))
+	}
+	var sum float64
+	for _, d := range durs {
+		sum += d
+	}
+	// Segment durations leave out turn penalties: less than the route's, but
+	// not wildly so.
+	if sum >= r.Duration || sum < 0.8*r.Duration {
+		t.Errorf("segment durations add up to %.1f, route duration %.1f", sum, r.Duration)
+	}
+	// The start is snapped east of the requested point, onto a road leaving eastwards.
+	if wp := res.Waypoints[0]; wp.Location[0] <= a2b[0].Lon {
+		t.Errorf("first waypoint %+v", wp)
+	}
+}
+
+func TestRouteParamValidation(t *testing.T) {
+	c := New("http://127.0.0.1:1", time.Second) // never reached
+	for name, p := range map[string]RouteParams{
+		"bearings count": {Points: a2b, Bearings: []Bearing{{Value: 1, Range: 1}}},
+		"radiuses count": {Points: a2b, Radiuses: []float64{1, 2, 3}},
+		"radius < 0":     {Points: a2b, Radiuses: []float64{-1, 0}},
+	} {
+		if _, err := c.Route(context.Background(), p); err == nil || strings.Contains(err.Error(), "127.0.0.1") {
+			t.Errorf("%s: want a validation error before any request, got %v", name, err)
+		}
+	}
+	// Without the new fields the request is unchanged (gateway cache keys and
+	// recorded fixtures rely on it).
+	c2, req2 := fixture(t, "route_car_polyline.json", 200)
+	if _, err := c2.Route(context.Background(), RouteParams{Profile: "car", Points: a2b}); err != nil {
+		t.Fatal(err)
+	}
+	q := req2.URL.Query()
+	if q.Has("bearings") || q.Has("radiuses") || q.Get("annotations") != "false" {
+		t.Errorf("query = %v", q)
+	}
+}
+
+func TestBearingString(t *testing.T) {
+	for _, c := range []struct {
+		b    Bearing
+		want string
+	}{{Bearing{}, ""}, {Bearing{Value: 87, Range: 45}, "87,45"}, {Bearing{Value: -10, Range: 400}, "350,180"}, {Bearing{Value: 360, Range: 1}, "0,1"}} {
+		if got := c.b.String(); got != c.want {
+			t.Errorf("%+v -> %q, want %q", c.b, got, c.want)
+		}
+	}
+}
+
+func TestGeometryPoints(t *testing.T) {
+	enc := geo.EncodePolyline(a2b, 5)
+	pts, err := RouteGeometry{Encoded: enc}.Points(Polyline)
+	if err != nil || len(pts) != 2 || pts[1] != a2b[1] {
+		t.Errorf("polyline: %v %v", pts, err)
+	}
+	pts, err = RouteGeometry{Line: LineString{{71.4306, 51.1283}, {71.47, 51.18}}}.Points(GeoJSON)
+	if err != nil || len(pts) != 2 || pts[0] != a2b[0] {
+		t.Errorf("geojson: %v %v", pts, err)
+	}
+	if _, err := (RouteGeometry{}).Points("wkt"); err == nil {
+		t.Error("unknown encoding accepted")
+	}
+}
+
+// trace is the input of the recorded match: six fixes 12 m apart along a
+// street, the fourth moved ~250 m away.
+var trace = []geo.Point{
+	{Lon: 71.444543, Lat: 51.139180}, {Lon: 71.444622, Lat: 51.139275}, {Lon: 71.444694, Lat: 51.139373},
+	{Lon: 71.441760, Lat: 51.140973}, {Lon: 71.444825, Lat: 51.139573}, {Lon: 71.444890, Lat: 51.139673},
+}
+
+func TestMatchFixture(t *testing.T) {
+	c, req := fixture(t, "match_car_outlier.json", 200)
+	ts := []int64{1760600000, 1760600001, 1760600002, 1760600003, 1760600004, 1760600005}
+	res, err := c.Match(context.Background(), MatchParams{
+		Profile: "car", Points: trace, Timestamps: ts, Radiuses: []float64{10, 10, 10, 10, 10, 10},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(req.URL.Path, "/match/v1/car/71.444543,51.13918;") {
+		t.Errorf("path = %q", req.URL.Path)
+	}
+	q := req.URL.Query()
+	if q.Get("timestamps") != "1760600000;1760600001;1760600002;1760600003;1760600004;1760600005" ||
+		q.Get("radiuses") != "10;10;10;10;10;10" || q.Get("overview") != "false" || q.Has("geometries") {
+		t.Errorf("query = %v", q)
+	}
+
+	if len(res.Matchings) != 1 || res.Matchings[0].Confidence < 0.9 {
+		t.Errorf("matchings: %+v", res.Matchings)
+	}
+	if len(res.Tracepoints) != len(trace) {
+		t.Fatalf("%d tracepoints for %d points", len(res.Tracepoints), len(trace))
+	}
+	if res.Tracepoints[3] != nil {
+		t.Errorf("the outlier must be dropped: %+v", res.Tracepoints[3])
+	}
+	tp := res.Tracepoints[5]
+	if tp == nil || tp.Name != "Амман көшесі" || tp.Location != [2]float64{71.44489, 51.139673} || tp.MatchingIndex != 0 {
+		t.Errorf("last tracepoint: %+v", tp)
+	}
+}
+
+func TestMatchErrors(t *testing.T) {
+	// Recorded: repeated timestamps make OSRM give up with NoMatch (HTTP 400).
+	c, _ := fixture(t, "error_no_match.json", 400)
+	if _, err := c.Match(context.Background(), MatchParams{Points: trace}); !errors.Is(err, ErrNoMatch) {
+		t.Errorf("NoMatch must map to ErrNoMatch, got %v", err)
+	}
+	// A point with no road segment nearby is a failed match too.
+	c2, _ := fixture(t, "error_no_segment.json", 400)
+	if _, err := c2.Match(context.Background(), MatchParams{Points: trace}); !errors.Is(err, ErrNoMatch) {
+		t.Errorf("NoSegment must map to ErrNoMatch, got %v", err)
+	}
+
+	never := New("http://127.0.0.1:1", time.Second)
+	for name, p := range map[string]MatchParams{
+		"one point":          {Points: trace[:1]},
+		"repeated timestamp": {Points: trace[:3], Timestamps: []int64{5, 6, 6}},
+		"timestamp count":    {Points: trace[:3], Timestamps: []int64{5, 6}},
+		"radiuses count":     {Points: trace[:3], Radiuses: []float64{5}},
+	} {
+		if _, err := never.Match(context.Background(), p); err == nil || strings.Contains(err.Error(), "127.0.0.1") {
+			t.Errorf("%s: want a validation error before any request, got %v", name, err)
+		}
+	}
+}
