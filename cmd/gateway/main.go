@@ -11,12 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"map-service/internal/cache"
 	"map-service/internal/clients/nominatim"
@@ -25,6 +23,7 @@ import (
 	"map-service/internal/config"
 	"map-service/internal/dataset"
 	"map-service/internal/httpapi"
+	"map-service/internal/httpkit"
 	"map-service/internal/tiles"
 )
 
@@ -130,23 +129,8 @@ func healthcheck() int {
 	if addr == "" {
 		addr = ":8080"
 	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
+	if err := httpkit.ProbeHealthz(addr); err != nil {
 		fmt.Fprintln(os.Stderr, "healthcheck:", err)
-		return 1
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/healthz")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "healthcheck:", err)
-		return 1
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintln(os.Stderr, "healthcheck: status", resp.Status)
 		return 1
 	}
 	return 0

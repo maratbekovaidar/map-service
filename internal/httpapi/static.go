@@ -17,6 +17,7 @@ import (
 
 	"map-service/internal/config"
 	"map-service/internal/dataset"
+	"map-service/internal/httpkit"
 	"map-service/internal/tiles"
 )
 
@@ -54,7 +55,7 @@ func (f *staticFiles) publicBase(r *http.Request) string {
 	if f.publicURL != "" {
 		return f.publicURL
 	}
-	proxied := isTrusted(remoteAddr(r.RemoteAddr), f.trusted)
+	proxied := httpkit.FromTrustedProxy(r, f.trusted)
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"

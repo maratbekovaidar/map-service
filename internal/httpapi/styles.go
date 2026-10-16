@@ -39,7 +39,7 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 			writeError(w, forbidden("switching the default style is disabled: set ADMIN_API_KEYS"))
 			return
 		}
-		id, ok := s.admin.check(r.Header.Get("X-API-Key"))
+		id, ok := s.admin.Check(r.Header.Get("X-API-Key"))
 		if !ok {
 			loggerFrom(r.Context()).Info("rejected request: not an admin key")
 			writeError(w, &Error{Status: http.StatusUnauthorized, Code: CodeUnauthorized, Message: "an admin API key (ADMIN_API_KEYS) is required"})

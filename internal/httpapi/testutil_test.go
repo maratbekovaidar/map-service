@@ -22,6 +22,7 @@ import (
 	"map-service/internal/clients/photon"
 	"map-service/internal/config"
 	"map-service/internal/geo"
+	"map-service/internal/httpkit"
 	"map-service/internal/tiles"
 )
 
@@ -231,7 +232,7 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 }
 
 // wantError asserts the unified error response.
-func wantError(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) errorDetail {
+func wantError(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) httpkit.ErrorDetail {
 	t.Helper()
 	if rec.Code != status {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, status, rec.Body.String())
@@ -239,7 +240,7 @@ func wantError(t *testing.T, rec *httptest.ResponseRecorder, status int, code st
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
 		t.Errorf("error Content-Type = %q", ct)
 	}
-	body := decode[errorBody](t, rec)
+	body := decode[httpkit.ErrorBody](t, rec)
 	if body.Error.Code != code || body.Error.Message == "" {
 		t.Fatalf("error = %+v, want code %q with a message", body.Error, code)
 	}

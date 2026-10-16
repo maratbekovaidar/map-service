@@ -163,6 +163,61 @@ func (l *loader) limit(rpsKey, burstKey string, rps float64, burst int) Limit {
 	return Limit{RPS: l.float(rpsKey, rps), Burst: l.int(burstKey, burst)}
 }
 
+// logLevel parses a debug|info|warn|error variable.
+func (l *loader) logLevel(key string) slog.Level {
+	switch strings.ToLower(l.str(key, "info")) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	}
+	l.fail("%s=%q: want debug, info, warn or error", key, l.get(key))
+	return slog.LevelInfo
+}
+
+// trustedProxies parses TRUSTED_PROXY_CIDRS.
+func (l *loader) trustedProxies() []netip.Prefix {
+	var out []netip.Prefix
+	for _, c := range l.list("TRUSTED_PROXY_CIDRS", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32") {
+		p, err := netip.ParsePrefix(c)
+		if err != nil {
+			l.fail("TRUSTED_PROXY_CIDRS: %q: %v", c, err)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// osrmURLs returns the OSRM base URL of every profile from OSRM_URL_TEMPLATE.
+func (l *loader) osrmURLs(profiles ...string) map[string]string {
+	tmpl := l.str("OSRM_URL_TEMPLATE", "http://osrm-%s:5000")
+	if strings.Count(tmpl, "%s") != 1 {
+		l.fail("OSRM_URL_TEMPLATE=%q must contain exactly one %%s (the profile)", tmpl)
+		tmpl = "http://osrm-%s:5000"
+	}
+	out := make(map[string]string, len(profiles))
+	for _, p := range profiles {
+		out[p] = strings.TrimRight(fmt.Sprintf(tmpl, p), "/")
+	}
+	return out
+}
+
+// apiKeys parses API_KEYS, ADMIN_API_KEYS and AUTH_DISABLED.
+func (l *loader) apiKeys() (keys, admin []string, disabled bool) {
+	keys = l.list("API_KEYS", "")
+	admin = l.list("ADMIN_API_KEYS", "")
+	disabled = l.bool("AUTH_DISABLED", false)
+	if len(keys) == 0 && !disabled {
+		l.fail("API_KEYS is empty: set at least one key (or AUTH_DISABLED=true for local development only)")
+	}
+	return keys, admin, disabled
+}
+
 func (l *loader) fail(format string, args ...any) {
 	l.errs = append(l.errs, fmt.Errorf(format, args...))
 }
@@ -245,18 +300,7 @@ func LoadGateway(get Getenv) (*Gateway, error) {
 	g := &Gateway{City: l.city()}
 
 	g.ListenAddr = l.str("GATEWAY_LISTEN_ADDR", ":8080")
-	switch strings.ToLower(l.str("GATEWAY_LOG_LEVEL", "info")) {
-	case "debug":
-		g.LogLevel = slog.LevelDebug
-	case "info":
-		g.LogLevel = slog.LevelInfo
-	case "warn", "warning":
-		g.LogLevel = slog.LevelWarn
-	case "error":
-		g.LogLevel = slog.LevelError
-	default:
-		l.fail("GATEWAY_LOG_LEVEL=%q: want debug, info, warn or error", l.get("GATEWAY_LOG_LEVEL"))
-	}
+	g.LogLevel = l.logLevel("GATEWAY_LOG_LEVEL")
 	g.ReadHeaderTimeout = l.dur("GATEWAY_READ_HEADER_TIMEOUT", 5*time.Second)
 	g.ReadTimeout = l.dur("GATEWAY_READ_TIMEOUT", 15*time.Second)
 	g.WriteTimeout = l.dur("GATEWAY_WRITE_TIMEOUT", 30*time.Second)
@@ -273,23 +317,11 @@ func LoadGateway(get Getenv) (*Gateway, error) {
 	}
 	g.DataVersionTTL = l.dur("DATA_VERSION_POLL", 10*time.Second)
 
-	g.APIKeys = l.list("API_KEYS", "")
-	g.AdminKeys = l.list("ADMIN_API_KEYS", "")
-	g.AuthDisabled = l.bool("AUTH_DISABLED", false)
-	if len(g.APIKeys) == 0 && !g.AuthDisabled {
-		l.fail("API_KEYS is empty: set at least one key (or AUTH_DISABLED=true for local development only)")
-	}
+	g.APIKeys, g.AdminKeys, g.AuthDisabled = l.apiKeys()
 	g.TilesMaxAge = l.dur("TILES_CACHE_MAX_AGE", time.Hour)
 	g.AuthRequireForTiles = l.bool("AUTH_REQUIRE_FOR_TILES", false)
 	g.CORSOrigins = l.list("CORS_ALLOWED_ORIGINS", "*")
-	for _, c := range l.list("TRUSTED_PROXY_CIDRS", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32") {
-		p, err := netip.ParsePrefix(c)
-		if err != nil {
-			l.fail("TRUSTED_PROXY_CIDRS: %q: %v", c, err)
-			continue
-		}
-		g.TrustedProxies = append(g.TrustedProxies, p)
-	}
+	g.TrustedProxies = l.trustedProxies()
 	g.LimitKey = l.limit("RATE_LIMIT_KEY_RPS", "RATE_LIMIT_KEY_BURST", 20, 40)
 	g.LimitIP = l.limit("RATE_LIMIT_IP_RPS", "RATE_LIMIT_IP_BURST", 10, 20)
 	g.LimitTiles = l.limit("RATE_LIMIT_TILES_RPS", "RATE_LIMIT_TILES_BURST", 200, 600)
@@ -306,15 +338,7 @@ func LoadGateway(get Getenv) (*Gateway, error) {
 
 	g.PhotonURL = strings.TrimRight(l.str("PHOTON_URL", "http://photon:2322"), "/")
 	g.NominatimURL = strings.TrimRight(l.str("NOMINATIM_URL", "http://nominatim:8080"), "/")
-	tmpl := l.str("OSRM_URL_TEMPLATE", "http://osrm-%s:5000")
-	if strings.Count(tmpl, "%s") != 1 {
-		l.fail("OSRM_URL_TEMPLATE=%q must contain exactly one %%s (the profile)", tmpl)
-		tmpl = "http://osrm-%s:5000"
-	}
-	g.OSRMURLs = make(map[string]string, len(g.Profiles))
-	for _, p := range g.Profiles {
-		g.OSRMURLs[p] = strings.TrimRight(fmt.Sprintf(tmpl, p), "/")
-	}
+	g.OSRMURLs = l.osrmURLs(g.Profiles...)
 	g.UpstreamTimeout = l.dur("UPSTREAM_TIMEOUT", 5*time.Second)
 	g.RouteTimeout = l.dur("ROUTE_TIMEOUT", 10*time.Second)
 

@@ -1,4 +1,4 @@
-package httpapi
+package httpkit
 
 import (
 	"net/http"
@@ -10,7 +10,7 @@ import (
 	"map-service/internal/config"
 )
 
-// Limiter keeps one token bucket per key (API key id or client IP).
+// Limiter keeps one token bucket per key (API key id, token or client IP).
 type Limiter struct {
 	limit rate.Limit
 	burst int
@@ -93,16 +93,16 @@ func (l *Limiter) Len() int {
 	return len(l.buckets)
 }
 
-// limitByIP rejects clients that exceed their per-IP bucket.
-func limitByIP(l *Limiter, ip func(*http.Request) string) func(http.Handler) http.Handler {
+// LimitByIP rejects clients that exceed their per-IP bucket.
+func LimitByIP(l *Limiter, ip func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if l == nil {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if ok, wait := l.Allow("ip:" + ip(r)); !ok {
-				loggerFrom(r.Context()).Info("rate limited", "by", "ip")
-				writeError(w, rateLimited(wait))
+				LoggerFrom(r.Context()).Info("rate limited", "by", "ip")
+				WriteError(w, RateLimited(wait))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -110,22 +110,22 @@ func limitByIP(l *Limiter, ip func(*http.Request) string) func(http.Handler) htt
 	}
 }
 
-// limitByKey rejects API keys that exceed their bucket. It must run after
+// LimitByKey rejects API keys that exceed their bucket. It must run after
 // authentication, which stores the key id in the request context.
-func limitByKey(l *Limiter) func(http.Handler) http.Handler {
+func LimitByKey(l *Limiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if l == nil {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id := keyIDFrom(r.Context())
+			id := KeyIDFrom(r.Context())
 			if id == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
 			if ok, wait := l.Allow("key:" + id); !ok {
-				loggerFrom(r.Context()).Info("rate limited", "by", "key")
-				writeError(w, rateLimited(wait))
+				LoggerFrom(r.Context()).Info("rate limited", "by", "key")
+				WriteError(w, RateLimited(wait))
 				return
 			}
 			next.ServeHTTP(w, r)

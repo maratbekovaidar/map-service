@@ -1,4 +1,4 @@
-package httpapi
+package httpkit
 
 import (
 	"context"
@@ -27,22 +27,26 @@ const (
 // access log (which only holds the original *http.Request).
 type reqInfo struct{ keyID string }
 
-// loggerFrom returns the request-scoped logger (it carries the request id).
-func loggerFrom(ctx context.Context) *slog.Logger {
+// LoggerFrom returns the request-scoped logger (it carries the request id).
+func LoggerFrom(ctx context.Context) *slog.Logger {
 	if l, ok := ctx.Value(ctxLoggerKey).(*slog.Logger); ok {
 		return l
 	}
 	return slog.Default()
 }
 
-func keyIDFrom(ctx context.Context) string {
+// KeyIDFrom returns the id of the API key (or token) that authenticated the
+// request, as set by SetKeyID.
+func KeyIDFrom(ctx context.Context) string {
 	if info, ok := ctx.Value(ctxInfoKey).(*reqInfo); ok {
 		return info.keyID
 	}
 	return ""
 }
 
-func setKeyID(ctx context.Context, id string) {
+// SetKeyID records who authenticated the request, for the access log and
+// per-key rate limits. It only works under Observe.
+func SetKeyID(ctx context.Context, id string) {
 	if info, ok := ctx.Value(ctxInfoKey).(*reqInfo); ok {
 		info.keyID = id
 	}
@@ -98,10 +102,10 @@ func validRequestID(s string) bool {
 	return true
 }
 
-// observe is the outermost middleware: request id, request-scoped logger,
+// Observe is the outermost middleware: request id, request-scoped logger,
 // panic recovery and the access log. Query strings are deliberately not
 // logged (they contain user-typed addresses and coordinates).
-func observe(log *slog.Logger, now func() time.Time) func(http.Handler) http.Handler {
+func Observe(log *slog.Logger, now func() time.Time) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := now()
@@ -123,7 +127,7 @@ func observe(log *slog.Logger, now func() time.Time) func(http.Handler) http.Han
 					}
 					rl.Error("panic in handler", "panic", rec, "stack", string(debug.Stack()))
 					if !sw.wrote {
-						writeError(sw, internalError(nil))
+						WriteError(sw, Internal(nil))
 					}
 				}
 				level := slog.LevelInfo
@@ -139,7 +143,7 @@ func observe(log *slog.Logger, now func() time.Time) func(http.Handler) http.Han
 					"method", r.Method, "path", r.URL.Path, "status", sw.status,
 					"bytes", sw.bytes, "duration_ms", now().Sub(start).Milliseconds(),
 				}
-				if k := keyIDFrom(r.Context()); k != "" {
+				if k := KeyIDFrom(r.Context()); k != "" {
 					attrs = append(attrs, "key_id", k)
 				}
 				rl.Log(r.Context(), level, "request", attrs...)
@@ -151,8 +155,9 @@ func observe(log *slog.Logger, now func() time.Time) func(http.Handler) http.Han
 
 // ------------------------------------------------------------------- CORS
 
-// cors answers preflight requests and adds CORS headers for allowed origins.
-func cors(origins []string) func(http.Handler) http.Handler {
+// CORS answers preflight requests and adds CORS headers for allowed origins.
+// methods and headers are what a preflight may ask for ("GET, POST, OPTIONS").
+func CORS(origins []string, methods, headers string) func(http.Handler) http.Handler {
 	anyOrigin := false
 	allowed := map[string]bool{}
 	for _, o := range origins {
@@ -178,8 +183,8 @@ func cors(origins []string) func(http.Handler) http.Handler {
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 				if ok {
 					h := w.Header()
-					h.Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, OPTIONS")
-					h.Set("Access-Control-Allow-Headers", "X-API-Key, Content-Type, If-None-Match, X-Request-Id")
+					h.Set("Access-Control-Allow-Methods", methods)
+					h.Set("Access-Control-Allow-Headers", headers)
 					h.Set("Access-Control-Max-Age", "86400")
 				}
 				w.WriteHeader(http.StatusNoContent)
@@ -210,9 +215,9 @@ func NewAuthenticator(keys []string, disabled bool) *Authenticator {
 	return a
 }
 
-// check returns the key id for a valid key. The comparison visits every
+// Check returns the key id for a valid key. The comparison visits every
 // configured key and is constant-time per key.
-func (a *Authenticator) check(key string) (string, bool) {
+func (a *Authenticator) Check(key string) (string, bool) {
 	if a.disabled {
 		return "anonymous", true
 	}
@@ -239,24 +244,24 @@ func keyID(key string) string {
 // Require rejects requests without a valid key.
 func (a *Authenticator) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := a.check(r.Header.Get("X-API-Key"))
+		id, ok := a.Check(r.Header.Get("X-API-Key"))
 		if !ok {
-			loggerFrom(r.Context()).Info("rejected request: bad API key")
-			writeError(w, unauthorized())
+			LoggerFrom(r.Context()).Info("rejected request: bad API key")
+			WriteError(w, Unauthorized("missing or invalid API key"))
 			return
 		}
-		setKeyID(r.Context(), id)
+		SetKeyID(r.Context(), id)
 		next.ServeHTTP(w, r)
 	})
 }
 
 // ---------------------------------------------------------------- client IP
 
-// clientIP returns the address of the real client. X-Forwarded-For is only
+// ClientIP returns the address of the real client. X-Forwarded-For is only
 // believed when the connection comes from a trusted proxy; then the list is
 // walked from the right and the first address that is not itself a trusted
 // proxy wins (so a spoofed left-hand entry is ignored).
-func clientIP(r *http.Request, trusted []netip.Prefix) string {
+func ClientIP(r *http.Request, trusted []netip.Prefix) string {
 	remote := remoteAddr(r.RemoteAddr)
 	if !remote.IsValid() || !isTrusted(remote, trusted) {
 		if remote.IsValid() {
@@ -281,6 +286,12 @@ func clientIP(r *http.Request, trusted []netip.Prefix) string {
 	return remote.String()
 }
 
+// FromTrustedProxy reports whether the connection comes from one of trusted
+// (so that its X-Forwarded-* headers may be believed).
+func FromTrustedProxy(r *http.Request, trusted []netip.Prefix) bool {
+	return isTrusted(remoteAddr(r.RemoteAddr), trusted)
+}
+
 func remoteAddr(s string) netip.Addr {
 	host, _, err := net.SplitHostPort(s)
 	if err != nil {
@@ -302,10 +313,66 @@ func isTrusted(a netip.Addr, trusted []netip.Prefix) bool {
 	return false
 }
 
-// chain applies middlewares so that the first one listed is the outermost.
-func chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
+// Chain applies middlewares so that the first one listed is the outermost.
+func Chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {
 		h = mws[i](h)
 	}
 	return h
+}
+
+// HandlerFunc is a handler that returns its error instead of writing it.
+type HandlerFunc func(w http.ResponseWriter, r *http.Request) error
+
+// Wrap turns an error-returning handler into an http.Handler that renders
+// errors in the unified format and logs server-side failures.
+func Wrap(h HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := h(w, r)
+		if err == nil {
+			return
+		}
+		e := AsError(err)
+		if e.Status >= 500 && e.Status != StatusClientClosed {
+			LoggerFrom(r.Context()).Error("request failed", "code", e.Code, "err", e.Err, "msg", e.Message)
+		}
+		WriteError(w, e)
+	})
+}
+
+// Route registers h for pattern and answers any method other than method
+// (HEAD is allowed wherever GET is) with a JSON 405. The method is checked
+// here rather than in the mux pattern because ServeMux rejects overlapping
+// "GET /tiles/{z}/{x}/{file}" and "/tiles/fonts/{stack}/{file}" style pairs.
+func Route(mux *http.ServeMux, method, pattern string, h http.Handler) {
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		headOnGet := method == http.MethodGet && r.Method == http.MethodHead
+		if r.Method != method && !headOnGet {
+			WriteError(w, MethodNotAllowed(method))
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// ProbeHealthz calls /healthz of the server listening on listenAddr (":8080"
+// means this host) and fails unless it answers 200: the Docker healthcheck.
+func ProbeHealthz(listenAddr string) error {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return err
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/healthz")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("status " + resp.Status)
+	}
+	return nil
 }

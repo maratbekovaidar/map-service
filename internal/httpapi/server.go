@@ -1,3 +1,6 @@
+// Package httpapi implements the gateway's HTTP API: handlers, middleware and
+// DTOs. It talks to the upstream services only through the small interfaces
+// declared in server.go, so every behaviour is unit-testable with fakes.
 package httpapi
 
 import (
@@ -13,6 +16,7 @@ import (
 	"map-service/internal/clients/photon"
 	"map-service/internal/config"
 	"map-service/internal/geo"
+	"map-service/internal/httpkit"
 	"map-service/internal/styles"
 	"map-service/internal/tiles"
 )
@@ -117,38 +121,11 @@ func New(d Deps) *Server {
 	return s
 }
 
-type handlerFunc func(w http.ResponseWriter, r *http.Request) error
+type handlerFunc = httpkit.HandlerFunc
 
 // wrap turns an error-returning handler into an http.Handler that renders
 // errors in the unified format and logs server-side failures.
-func (s *Server) wrap(h handlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		err := h(w, r)
-		if err == nil {
-			return
-		}
-		e := asError(err)
-		if e.Status >= 500 && e.Status != statusClientClosed {
-			loggerFrom(r.Context()).Error("request failed", "code", e.Code, "err", e.Err, "msg", e.Message)
-		}
-		writeError(w, e)
-	})
-}
-
-// route registers h for pattern and answers any method other than method
-// (HEAD is allowed wherever GET is) with a JSON 405. The method is checked
-// here rather than in the mux pattern because ServeMux rejects overlapping
-// "GET /tiles/{z}/{x}/{file}" and "/tiles/fonts/{stack}/{file}" style pairs.
-func route(mux *http.ServeMux, method, pattern string, h http.Handler) {
-	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		headOnGet := method == http.MethodGet && r.Method == http.MethodHead
-		if r.Method != method && !headOnGet {
-			writeError(w, methodNotAllowed(method))
-			return
-		}
-		h.ServeHTTP(w, r)
-	})
-}
+func (s *Server) wrap(h handlerFunc) http.Handler { return httpkit.Wrap(h) }
 
 // Handler returns the complete HTTP handler with all middleware applied.
 func (s *Server) Handler() http.Handler {
