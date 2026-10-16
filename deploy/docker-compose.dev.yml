@@ -31,6 +31,9 @@ services:
   redis:
     ports: ["127.0.0.1:${DEV_REDIS_PORT:-16379}:6379"]
     networks: [internal, dev]
+  trips:
+    ports: ["127.0.0.1:${DEV_TRIPS_PORT:-8082}:8080"]
+    networks: [edge, internal, dev]
   trips-db:
     ports: ["127.0.0.1:${DEV_TRIPS_DB_PORT:-15433}:5432"]
     networks: [internal, dev]

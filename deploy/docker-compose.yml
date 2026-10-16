@@ -2,8 +2,8 @@
 # exports DATA_DIR / DATA_VERSION / REPO_DIR which this file relies on.
 #
 # Networks
-#   edge     - caddy <-> gateway. The only network with internet access.
-#   internal - gateway, redis, nominatim, photon, osrm-*, trips-db. `internal: true`
+#   edge     - caddy <-> gateway, trips. The only network with internet access.
+#   internal - gateway, trips, redis, nominatim, photon, osrm-*, trips-db. `internal: true`
 #              means NO egress at all: the map backends physically cannot
 #              call external map APIs, and publish no ports to the host.
 #
@@ -216,6 +216,46 @@ services:
       - ${DATA_DIR}/${DATA_VERSION:-none}/osrm/bicycle:/data:ro
 
   # --------------------------------------------------------------- trips ----
+  # Trip tracking API (/v1/trips*, routed here by Caddy). Talks to trips-db
+  # and osrm-car; Caddy does not wait for it, so a database outage leaves the
+  # map endpoints alone.
+  trips:
+    build:
+      context: ..
+      dockerfile: deploy/trips.Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:-mapsvc}-trips:local
+    restart: unless-stopped
+    logging: *logging
+    env_file: ../.env
+    environment:
+      DATA_ROOT: /data
+      TRIPS_LISTEN_ADDR: ":8080"
+      # libpq-style connection settings, used unless TRIPS_DB_URL is set;
+      # no URL to escape the password into.
+      PGHOST: trips-db
+      PGPORT: "5432"
+      PGUSER: trips
+      PGPASSWORD: ${TRIPS_DB_PASSWORD:?set TRIPS_DB_PASSWORD in .env}
+      PGDATABASE: trips
+      PGSSLMODE: disable
+    volumes:
+      # Only to stamp routes with the map data version they were built on.
+      - ${DATA_DIR:?DATA_DIR is exported by the Makefile}:/data:ro
+    networks: [edge, internal]
+    depends_on:
+      trips-db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/trips", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   # Trip tracking database: trips, routes, positions and events. Unlike the
   # map data it is user data that the updater never rebuilds - back it up.
   trips-db:

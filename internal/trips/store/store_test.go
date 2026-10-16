@@ -65,6 +65,9 @@ func freshStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	// Tells this test's connections apart from those of tests running in
+	// parallel against the same database.
+	cfg.ConnConfig.RuntimeParams["application_name"] = schema
 	s, err := open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -485,9 +488,25 @@ func TestListen(t *testing.T) {
 	s := testStore(t)
 	trip := newTrip(t, s)
 
-	notes := make(chan Notification, 16)
+	// NOTIFY reaches every listener of the database, including those of
+	// tests running in parallel: only this test's trips count.
+	var (
+		mu   sync.Mutex
+		mine = map[string]bool{trip.ID: true}
+	)
+	own := func(id string) { mu.Lock(); mine[id] = true; mu.Unlock() }
+	notes := make(chan Notification, 64)
 	done := make(chan error, 1)
-	go func() { done <- s.Listen(ctx, func(n Notification) { notes <- n }) }()
+	go func() {
+		done <- s.Listen(ctx, func(n Notification) {
+			mu.Lock()
+			ok := n == (Notification{}) || mine[n.TripID]
+			mu.Unlock()
+			if ok {
+				notes <- n
+			}
+		})
+	}()
 	next := func() Notification {
 		t.Helper()
 		select {
@@ -516,6 +535,7 @@ func TestListen(t *testing.T) {
 	}
 
 	expiring := newTrip(t, s)
+	own(expiring.ID)
 	if _, err := s.ExpireIdle(context.Background(), time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +550,8 @@ func TestListen(t *testing.T) {
 	// The listening connection dies: Listen reconnects, says that it may have
 	// missed notifications, and goes on delivering.
 	tag, err := s.pool.Exec(context.Background(), `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-		WHERE query = 'LISTEN `+notifyChannel+`' AND pid <> pg_backend_pid()`)
+		WHERE query = 'LISTEN `+notifyChannel+`' AND application_name = current_setting('application_name')
+		AND pid <> pg_backend_pid()`)
 	if err != nil || tag.RowsAffected() != 1 {
 		t.Fatalf("terminated %d listeners: %v", tag.RowsAffected(), err)
 	}

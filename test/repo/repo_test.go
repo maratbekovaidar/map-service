@@ -55,7 +55,8 @@ func exampleEnv(t *testing.T) map[string]string {
 
 // variables set by compose/Docker or meant for tests, not for the operator.
 var internalOnly = map[string]bool{
-	"DATA_ROOT": true, "STATIC_DIR": true, "STATE_DIR": true, "GATEWAY_LISTEN_ADDR": true, // fixed inside the gateway container
+	"DATA_ROOT": true, "STATIC_DIR": true, "STATE_DIR": true, // fixed inside the containers
+	"GATEWAY_LISTEN_ADDR": true, "TRIPS_LISTEN_ADDR": true,
 	"REPO_DIR": true, "COMPOSE_FILE_PATH": true, "COMPOSE_ENV_FILE": true, // set by the Makefile/compose for the updater
 	"OSMIUM_BIN": true, "DOCKER_BIN": true, "LOG_FORMAT": true, // tool locations / log style of the updater
 }
@@ -82,6 +83,9 @@ func TestExampleConfigIsValidAndDocumentsEveryVariable(t *testing.T) {
 
 	if _, err := config.LoadGateway(spy(env, seen)); err != nil {
 		t.Errorf(".env.example is not a valid gateway configuration: %v", err)
+	}
+	if _, err := config.LoadTrips(spy(env, seen)); err != nil {
+		t.Errorf(".env.example is not a valid trips configuration: %v", err)
 	}
 	env["REPO_DIR"] = "/srv/map-service" // the updater requires an absolute path
 	if _, err := pipeline.LoadConfig(spy(env, seen)); err != nil {
