@@ -14,7 +14,8 @@ func TestLoadTripsDefaults(t *testing.T) {
 	if c.ListenAddr != ":8080" || c.DatabaseURL != "" || c.DataRoot != "/data" || c.OSRMURL != "http://osrm-car:5000" {
 		t.Errorf("defaults: %+v", c)
 	}
-	if c.MaxBatch != 100 || c.IdleTimeout != 30*time.Minute || c.Retention != 90*24*time.Hour || c.RouteTimeout != 10*time.Second {
+	if c.MaxBatch != 100 || c.IdleTimeout != 30*time.Minute || c.Retention != 90*24*time.Hour || c.RouteTimeout != 10*time.Second ||
+		c.WatchGrace != time.Hour {
 		t.Errorf("trip defaults: %+v", c)
 	}
 	if c.LimitTrip != (Limit{RPS: 2, Burst: 10}) || c.LimitTokenIP != (Limit{RPS: 50, Burst: 100}) || c.LimitKey != (Limit{RPS: 20, Burst: 40}) {

@@ -710,3 +710,25 @@ func TestParseBearer(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchTokenExpiresAfterTheEnd(t *testing.T) {
+	hs := newHarness(t, nil) // TRIPS_WATCH_GRACE: 1h
+	trip := hs.createTrip()
+	path := "/v1/trips/" + trip.Trip.ID
+	hs.do("POST", path+"/finish", nil, bearer(trip.DriverToken)...)
+
+	hs.clock.add(59 * time.Minute)
+	if rec := hs.do("GET", path, nil, bearer(trip.WatchToken)...); rec.Code != http.StatusOK {
+		t.Errorf("watcher within the grace period: %d", rec.Code)
+	}
+	hs.clock.add(2 * time.Minute)
+	for _, p := range []string{path, path + "/track", path + "/events"} {
+		wantError(t, hs.do("GET", p, nil, bearer(trip.WatchToken)...), http.StatusForbidden, httpkit.CodeForbidden)
+	}
+	// The driver keeps the history.
+	for _, p := range []string{path, path + "/track"} {
+		if rec := hs.do("GET", p, nil, bearer(trip.DriverToken)...); rec.Code != http.StatusOK {
+			t.Errorf("driver %s after the grace period: %d", p, rec.Code)
+		}
+	}
+}

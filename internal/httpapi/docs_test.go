@@ -138,12 +138,13 @@ func TestDocsAreNotBehindAPIKeys(t *testing.T) {
 
 // TestSpecPathsAreRouted keeps the documentation honest: every concrete path
 // and method of the spec must exist in the gateway (templated tile paths are
-// covered by the tile tests).
+// covered by the tile tests; /v1/trips* belongs to the trips service, which
+// checks it the same way).
 func TestSpecPathsAreRouted(t *testing.T) {
 	hs := newHarness(t, nil, nil)
 	spec := parseSpec(t, api.OpenAPI)
 	for p, item := range spec.Paths {
-		if strings.Contains(p, "{") {
+		if strings.Contains(p, "{") || strings.HasPrefix(p, "/v1/trips") {
 			continue
 		}
 		ops, _ := item.(map[string]any)
@@ -158,4 +159,36 @@ func TestSpecPathsAreRouted(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestSpecRefsResolve: every $ref of the spec points at something that exists.
+func TestSpecRefsResolve(t *testing.T) {
+	var doc map[string]any
+	if err := yaml.Unmarshal(api.OpenAPI, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if ref, ok := v["$ref"].(string); ok {
+				var node any = doc
+				for _, part := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+					m, _ := node.(map[string]any)
+					node = m[part]
+				}
+				if node == nil {
+					t.Errorf("unresolved $ref %s", ref)
+				}
+			}
+			for _, child := range v {
+				walk(child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(child)
+			}
+		}
+	}
+	walk(doc)
 }

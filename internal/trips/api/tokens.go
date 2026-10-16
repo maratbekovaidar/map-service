@@ -103,6 +103,11 @@ func (s *Server) withTrip(h tripHandler, roles ...role) httpkit.HandlerFunc {
 		// Short, non-secret label for the access log: the role and the random
 		// tail of the trip id (UUIDv7 ids start with a timestamp).
 		httpkit.SetKeyID(r.Context(), string(claimed)+":"+trip.ID[len(trip.ID)-8:])
+		if claimed == watcher && trip.Status != store.Active && s.now().Sub(trip.EndedAt) > s.cfg.WatchGrace {
+			// A shared watch link must not expose the driver's route for
+			// as long as the history is kept.
+			return httpkit.Forbidden("the trip has ended and its watch token has expired")
+		}
 		if !slices.Contains(roles, claimed) {
 			return httpkit.Forbidden("the %s token may not do this", claimed)
 		}

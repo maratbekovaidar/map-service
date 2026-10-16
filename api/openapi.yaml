@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: map-service API
   version: 1.0.0
-  summary: Geocoding, autocomplete, routing and vector tiles for a single city.
+  summary: Geocoding, autocomplete, routing, vector tiles and live trip tracking for a single city.
   description: |
     Self-hosted map API built on OpenStreetMap data (Nominatim, Photon, OSRM,
     PMTiles). Responses use the service's own JSON format; raw upstream
@@ -16,6 +16,16 @@ info:
     `/healthz` and `/tiles/*` are public unless `AUTH_REQUIRE_FOR_TILES=true`.
     `PUT /v1/styles/default` needs an admin key (`ADMIN_API_KEYS`); admin keys
     are accepted wherever an API key is.
+
+    **Trips.** A driver's app creates a trip (`POST /v1/trips`, API key) and
+    gets the route plus two tokens: `drv_…` for itself and `wch_…` to hand to
+    one watcher. The app sends GPS positions in batches; the service follows
+    the car along the route, builds a new route when the car leaves it and
+    ends the trip on arrival. The watcher reads the trip
+    (`GET /v1/trips/{id}`) and follows it live over Server-Sent Events
+    (`/v1/trips/{id}/events`). Every `/v1/trips/{id}…` call takes a trip
+    token as `Authorization: Bearer`, never the API key. Trips are served by
+    the separate `trips` service behind the same address.
 
     **Map styles.** Several MapLibre styles are installed (`GET /v1/styles`);
     `/tiles/style.json` is the default one, which an admin can switch at
@@ -45,6 +55,8 @@ tags:
     description: Map style catalogue and the default style
   - name: tiles
     description: Vector tiles and map style resources
+  - name: trips
+    description: Trip tracking - a car followed along its route, rerouting, a live view for one watcher
   - name: ops
     description: Health probes
 security:
@@ -230,6 +242,234 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { error: { code: forbidden, message: "switching the default style is disabled: set ADMIN_API_KEYS" } }
+        "429": { $ref: "#/components/responses/Error429" }
+
+  /v1/trips:
+    post:
+      tags: [trips]
+      operationId: createTrip
+      summary: Create a trip (driver's app)
+      description: |
+        Builds the first car route from `origin` to `destination` (both inside
+        the city) and returns it with the trip's two tokens. **The tokens are
+        shown only here**: the service stores nothing but their SHA-256. Keep
+        `driver_token` in the app; give `watch_token` to the watcher (as a
+        link, for instance). `heading` makes a car that is already moving get
+        a route that starts in its direction of travel.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTripRequest" }
+      responses:
+        "201":
+          description: The new trip.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateTripResponse" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/Error401" }
+        "404": { $ref: "#/components/responses/Error404" }
+        "429": { $ref: "#/components/responses/Error429" }
+        "502": { $ref: "#/components/responses/Error502" }
+        "504": { $ref: "#/components/responses/Error504" }
+
+  /v1/trips/{id}:
+    get:
+      tags: [trips]
+      operationId: getTrip
+      summary: The trip as it is now (driver or watcher)
+      description: |
+        Status, current route, last accepted position and progress, and
+        `last_event_id`: the event stream continues after it.
+      security: [{ TripToken: [] }]
+      parameters: [{ $ref: "#/components/parameters/TripID" }]
+      responses:
+        "200":
+          description: The trip.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TripSnapshot" }
+        "401": { $ref: "#/components/responses/TripError401" }
+        "403": { $ref: "#/components/responses/TripError403" }
+        "404": { $ref: "#/components/responses/TripError404" }
+        "429": { $ref: "#/components/responses/Error429" }
+
+  /v1/trips/{id}/positions:
+    post:
+      tags: [trips]
+      operationId: sendPositions
+      summary: Report GPS positions (driver)
+      description: |
+        A batch of fixes, oldest first, at most `TRIPS_MAX_BATCH` (100). Send
+        one every 3-5 s while driving, the app in the background included;
+        without network keep collecting and send the backlog in order, in
+        chunks of at most 100. `seq` numbers the fixes of the whole trip from
+        1; a batch sent again (no answer received) is harmless, fixes whose
+        `seq` was already seen are ignored.
+
+        The service follows the car along its route. When the car has left
+        the route (several fixes, seconds and metres away from it, confirmed
+        by map matching where parallel roads make distance ambiguous) it
+        builds a new route from the car's position and heading to the
+        destination: `route_version` grows and, because it differs from
+        `known_route_version`, the answer carries the new `route`. When the
+        car stops within ~40 m of the destination the trip ends with status
+        `arrived`; later batches get `409 trip_ended`.
+
+        Fixes whose device clock is more than 10 min ahead or 24 h behind the
+        server are stored as rejected (`bad_time`) and otherwise ignored.
+      security: [{ TripToken: [] }]
+      parameters: [{ $ref: "#/components/parameters/TripID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PositionsRequest" }
+      responses:
+        "200":
+          description: What the batch changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PositionsResponse" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/TripError401" }
+        "403": { $ref: "#/components/responses/TripError403" }
+        "404": { $ref: "#/components/responses/TripError404" }
+        "409": { $ref: "#/components/responses/TripError409" }
+        "429": { $ref: "#/components/responses/Error429" }
+
+  /v1/trips/{id}/events:
+    get:
+      tags: [trips]
+      operationId: tripEvents
+      summary: Follow the trip live (Server-Sent Events, driver or watcher)
+      description: |
+        A `text/event-stream`. Every event has an `id`, an `event` type and a
+        JSON `data` line:
+
+        | event | data | when |
+        |---|---|---|
+        | `snapshot` | `TripSnapshot` | first, unless resuming; its id is the trip's latest event |
+        | `position` | `PositionEvent` | a batch with accepted fixes arrived (`points` lets the map animate the car between them) |
+        | `route` | `TripRoute` | the trip got a new route |
+        | `status` | `TripStatusEvent` | the trip ended; the stream closes |
+
+        Without `Last-Event-ID` the stream starts with a snapshot. With it
+        (EventSource sends it when it reconnects; `last_event_id` does the same
+        as a query parameter) the missed events come first; if more than 200
+        were missed, a fresh snapshot replaces them. Reconnecting to an ended
+        trip with nothing left to send answers `204`, which makes EventSource
+        stop. Quiet streams get a `: ping` comment every 15 s; `retry` is 3 s.
+        At most 4 streams per trip.
+
+        Browsers' EventSource cannot send `Authorization`; read the stream
+        with `fetch` instead, and keep the token out of URLs (a page can take
+        it from its `#fragment`, which is never sent to the server).
+      security: [{ TripToken: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TripID" }
+        - name: Last-Event-ID
+          in: header
+          description: Resume after this event.
+          schema: { type: integer, minimum: 0 }
+        - name: last_event_id
+          in: query
+          description: Same as the `Last-Event-ID` header (the header wins).
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                retry: 3000
+
+                id: 41
+                event: snapshot
+                data: {"trip":{"id":"01a14369-9f1b-7ba3-87a8-926e582553f9","status":"active",...},"last_event_id":41}
+
+                id: 42
+                event: position
+                data: {"position":{"seq":251,"ts":"2026-10-16T06:32:44Z","lat":51.1452,"lon":71.4466},"points":[...],"progress":{...},"route_version":1}
+
+                : ping
+
+        "204":
+          description: The trip has ended and there is nothing more to send.
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/TripError401" }
+        "403": { $ref: "#/components/responses/TripError403" }
+        "404": { $ref: "#/components/responses/TripError404" }
+        "429": { $ref: "#/components/responses/Error429" }
+
+  /v1/trips/{id}/track:
+    get:
+      tags: [trips]
+      operationId: tripTrack
+      summary: The trip's history (driver or watcher)
+      description: |
+        Every route the trip had and its positions in `seq` order, page by
+        page: while `next_after_seq` is present, ask again with `after_seq` set
+        to it. Rejected positions are included, with the reason. History is
+        kept `TRIPS_RETENTION` (90 days) after the trip ends; the watcher's
+        token stops working `TRIPS_WATCH_GRACE` (1 h) after the end.
+      security: [{ TripToken: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/TripID" }
+        - name: after_seq
+          in: query
+          description: Positions with a greater `seq`.
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          description: Positions per page.
+          schema: { type: integer, minimum: 1, maximum: 5000, default: 1000 }
+      responses:
+        "200":
+          description: One page of the history.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrackResponse" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "401": { $ref: "#/components/responses/TripError401" }
+        "403": { $ref: "#/components/responses/TripError403" }
+        "404": { $ref: "#/components/responses/TripError404" }
+        "429": { $ref: "#/components/responses/Error429" }
+
+  /v1/trips/{id}/finish:
+    post:
+      tags: [trips]
+      operationId: finishTrip
+      summary: End the trip (driver)
+      description: |
+        The trip ends with status `finished` (the car did not stop close
+        enough to the destination to arrive on its own, say). Ending an ended
+        trip changes nothing and answers with how it ended, so retrying is
+        safe.
+      security: [{ TripToken: [] }]
+      parameters: [{ $ref: "#/components/parameters/TripID" }]
+      responses:
+        "200": { $ref: "#/components/responses/TripEnded" }
+        "401": { $ref: "#/components/responses/TripError401" }
+        "403": { $ref: "#/components/responses/TripError403" }
+        "404": { $ref: "#/components/responses/TripError404" }
+        "429": { $ref: "#/components/responses/Error429" }
+
+  /v1/trips/{id}/cancel:
+    post:
+      tags: [trips]
+      operationId: cancelTrip
+      summary: Cancel the trip (driver)
+      description: As `finish`, with status `cancelled`.
+      security: [{ TripToken: [] }]
+      parameters: [{ $ref: "#/components/parameters/TripID" }]
+      responses:
+        "200": { $ref: "#/components/responses/TripEnded" }
+        "401": { $ref: "#/components/responses/TripError401" }
+        "403": { $ref: "#/components/responses/TripError403" }
+        "404": { $ref: "#/components/responses/TripError404" }
         "429": { $ref: "#/components/responses/Error429" }
 
   /tiles/{z}/{x}/{y}.mvt:
@@ -466,8 +706,22 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
+    TripToken:
+      type: http
+      scheme: bearer
+      description: |
+        A trip's own token from `POST /v1/trips`: `drv_…` (the driver: may
+        also send positions and end the trip) or `wch_…` (the watcher: reads
+        only).
 
   parameters:
+    TripID:
+      name: id
+      in: path
+      required: true
+      description: Trip id (UUID) from `POST /v1/trips`.
+      schema: { type: string, format: uuid }
+      example: 01a14369-9f1b-7ba3-87a8-926e582553f9
     Query:
       name: q
       in: query
@@ -487,6 +741,40 @@ components:
       schema: { type: string, examples: [ru] }
 
   responses:
+    TripError401:
+      description: Missing or invalid trip token (`unauthorized`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: unauthorized, message: "missing or invalid trip token (Authorization: Bearer drv_... or wch_...)" } }
+    TripError403:
+      description: |
+        The watcher's token may only read (`forbidden`), and only until
+        `TRIPS_WATCH_GRACE` (1 h) after the trip has ended; the driver's token
+        reads the trip until it is deleted.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            readOnly: { value: { error: { code: forbidden, message: "the watcher token may not do this" } } }
+            expired: { value: { error: { code: forbidden, message: "the trip has ended and its watch token has expired" } } }
+    TripError404:
+      description: No such trip (`not_found`); also a trip deleted after `TRIPS_RETENTION`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: not_found, message: "no such trip" } }
+    TripError409:
+      description: The trip has ended (`trip_ended`); stop sending positions.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: trip_ended, message: "the trip has ended (arrived)" } }
+    TripEnded:
+      description: How the trip ended.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/TripEnd" }
     Places:
       description: Matching places, best first. May be empty.
       content:
@@ -554,6 +842,7 @@ components:
                 - rate_limited
                 - upstream_unavailable
                 - upstream_timeout
+                - trip_ended
                 - internal
             message: { type: string }
 
@@ -693,6 +982,191 @@ components:
         styles:
           type: array
           items: { $ref: "#/components/schemas/StyleInfo" }
+
+    LatLon:
+      type: object
+      required: [lat, lon]
+      properties:
+        lat: { type: number, example: 51.1283 }
+        lon: { type: number, example: 71.4306 }
+
+    TripStatus:
+      type: string
+      description: "`active`, or how the trip ended: `arrived` (the tracker saw the car arrive), `finished`, `cancelled` (the driver ended it), `expired` (no positions for `TRIPS_IDLE_TIMEOUT`, 30 min)."
+      enum: [active, arrived, finished, cancelled, expired]
+
+    CreateTripRequest:
+      type: object
+      required: [origin, destination]
+      properties:
+        origin: { $ref: "#/components/schemas/LatLon" }
+        destination: { $ref: "#/components/schemas/LatLon" }
+        heading:
+          type: number
+          minimum: 0
+          exclusiveMaximum: 360
+          description: Direction the car is already moving in at the origin, degrees clockwise from north.
+
+    Trip:
+      type: object
+      required: [id, status, origin, destination, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/TripStatus" }
+        origin: { $ref: "#/components/schemas/LatLon" }
+        destination: { $ref: "#/components/schemas/LatLon" }
+        created_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time, description: Present once the trip has ended. }
+
+    TripRoute:
+      type: object
+      required: [version, reason, distance_m, duration_s, geometry, created_at]
+      properties:
+        version: { type: integer, minimum: 1, description: "1 is the first route; every new route adds one." }
+        reason: { type: string, enum: [initial, off_route, wrong_way], description: "Why it was built: the trip started, the car took another road, or it drove against the route." }
+        distance_m: { type: number, example: 9044.8 }
+        duration_s: { type: number, example: 750.2 }
+        geometry:
+          type: string
+          description: Encoded polyline with precision 6 (OSRM's `polyline6`; decode with a factor of 1e6), from the car's position to the destination.
+        created_at: { type: string, format: date-time }
+
+    CreateTripResponse:
+      type: object
+      required: [trip, driver_token, watch_token, route]
+      properties:
+        trip: { $ref: "#/components/schemas/Trip" }
+        driver_token: { type: string, pattern: "^drv_[A-Za-z0-9_-]{43}$", description: For the driver's app. Shown only once. }
+        watch_token: { type: string, pattern: "^wch_[A-Za-z0-9_-]{43}$", description: For the watcher. Shown only once. }
+        route: { $ref: "#/components/schemas/TripRoute" }
+
+    PositionInput:
+      type: object
+      required: [seq, ts, lat, lon]
+      properties:
+        seq: { type: integer, minimum: 1, description: "Numbers the fixes of the trip from 1, increasing." }
+        ts: { type: string, format: date-time, description: When the device took the fix (RFC 3339). }
+        lat: { type: number }
+        lon: { type: number }
+        accuracy: { type: number, description: Horizontal accuracy in metres; fixes worse than 50 m are ignored. }
+        speed: { type: number, description: m/s. }
+        heading: { type: number, description: Degrees clockwise from north. }
+
+    PositionsRequest:
+      type: object
+      required: [positions]
+      properties:
+        known_route_version:
+          type: integer
+          description: The route version the app shows; the answer carries the route when the trip's version differs (send 0 to get it).
+        positions:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: "#/components/schemas/PositionInput" }
+
+    Progress:
+      type: object
+      required: [along_m, remaining_m, remaining_s, off_route]
+      properties:
+        along_m: { type: number, description: Metres from the start of the current route. }
+        remaining_m: { type: number, description: Metres to the destination along the route. }
+        remaining_s: { type: number, description: Seconds to the destination (OSRM's speeds, no traffic). }
+        off_route: { type: boolean, description: The car has left the route and a new one is on its way. }
+
+    PositionsResponse:
+      type: object
+      required: [status, route_version, last_seq]
+      properties:
+        status: { $ref: "#/components/schemas/TripStatus" }
+        route_version: { type: integer }
+        last_seq: { type: integer, description: Highest `seq` the service has seen. }
+        progress: { $ref: "#/components/schemas/Progress" }
+        route: { $ref: "#/components/schemas/TripRoute" }
+
+    TripPosition:
+      type: object
+      required: [seq, ts, lat, lon]
+      properties:
+        seq: { type: integer }
+        ts: { type: string, format: date-time }
+        lat: { type: number }
+        lon: { type: number }
+        accuracy: { type: number }
+        speed: { type: number }
+        heading: { type: number }
+
+    TripSnapshot:
+      type: object
+      required: [trip, route, last_event_id]
+      properties:
+        trip: { $ref: "#/components/schemas/Trip" }
+        route: { $ref: "#/components/schemas/TripRoute" }
+        position: { $ref: "#/components/schemas/TripPosition" }
+        progress: { $ref: "#/components/schemas/Progress" }
+        last_event_id: { type: integer, description: "The event stream continues after this id (0: no events yet)." }
+
+    TripPoint:
+      type: object
+      required: [ts, lat, lon]
+      properties:
+        ts: { type: string, format: date-time }
+        lat: { type: number }
+        lon: { type: number }
+
+    PositionEvent:
+      type: object
+      required: [position, points, progress, route_version]
+      properties:
+        position: { $ref: "#/components/schemas/TripPosition" }
+        points:
+          type: array
+          description: The batch's accepted fixes, oldest first, to animate the car between them.
+          items: { $ref: "#/components/schemas/TripPoint" }
+        progress: { $ref: "#/components/schemas/Progress" }
+        route_version: { type: integer }
+
+    TripStatusEvent:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: "#/components/schemas/TripStatus" }
+
+    TripEnd:
+      type: object
+      required: [status, ended_at]
+      properties:
+        status: { $ref: "#/components/schemas/TripStatus" }
+        ended_at: { type: string, format: date-time }
+
+    TrackPosition:
+      type: object
+      required: [seq, ts, lat, lon, received_at, route_version]
+      properties:
+        seq: { type: integer }
+        ts: { type: string, format: date-time }
+        lat: { type: number }
+        lon: { type: number }
+        accuracy: { type: number }
+        speed: { type: number }
+        heading: { type: number }
+        received_at: { type: string, format: date-time }
+        route_version: { type: integer, description: The route it was judged against. }
+        class: { type: string, enum: [on, near, off, wrong_way, start], description: "Where it lay: on the route, near it, clearly off, on it against the direction, or before the car reached the route." }
+        reject: { type: string, enum: [duplicate, out_of_order, invalid, inaccurate, jump, bad_time], description: Why it was ignored. }
+
+    TrackResponse:
+      type: object
+      required: [trip, routes, positions]
+      properties:
+        trip: { $ref: "#/components/schemas/Trip" }
+        routes:
+          type: array
+          items: { $ref: "#/components/schemas/TripRoute" }
+        positions:
+          type: array
+          items: { $ref: "#/components/schemas/TrackPosition" }
+        next_after_seq: { type: integer, description: "More positions follow: ask again with after_seq set to this." }
 
     Readiness:
       type: object

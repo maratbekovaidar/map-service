@@ -39,6 +39,9 @@ type Trips struct {
 	MaxBatch    int           // positions per request
 	IdleTimeout time.Duration // an active trip without positions for this long expires
 	Retention   time.Duration // ended trips are deleted after this long
+	// WatchGrace is how long after its end a trip's watch token still works
+	// (the driver's token works until the trip is deleted).
+	WatchGrace time.Duration
 }
 
 // LoadTrips parses the trips service configuration.
@@ -81,6 +84,7 @@ func LoadTrips(get Getenv) (*Trips, error) {
 	if t.Retention < 24*time.Hour {
 		l.fail("TRIPS_RETENTION must be at least 24h")
 	}
+	t.WatchGrace = l.dur("TRIPS_WATCH_GRACE", time.Hour)
 	if err := l.err(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
