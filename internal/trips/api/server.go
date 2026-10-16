@@ -12,6 +12,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"map-service/internal/clients/osrm"
@@ -57,6 +58,13 @@ type Server struct {
 	tripLim *httpkit.Limiter
 	tokLim  *httpkit.Limiter
 	routes  *routeCache
+
+	hub *hub
+	// Event streams (events.go); fields so that tests can shorten them.
+	heartbeat time.Duration // comment line on a quiet stream
+	maxReplay int           // events after Last-Event-ID beyond this are replaced by a snapshot
+	closing   chan struct{} // closed by CloseStreams
+	closeOnce sync.Once
 }
 
 // New builds a Server.
@@ -78,6 +86,11 @@ func New(d Deps) *Server {
 		tripLim: httpkit.NewLimiter(d.Cfg.LimitTrip, now),
 		tokLim:  httpkit.NewLimiter(d.Cfg.LimitTokenIP, now),
 		routes:  newRouteCache(1000),
+
+		hub:       newHub(maxStreamsPerTrip),
+		heartbeat: 15 * time.Second,
+		maxReplay: 200,
+		closing:   make(chan struct{}),
 	}
 }
 
@@ -96,6 +109,8 @@ func (s *Server) Handler() http.Handler {
 		return httpkit.Chain(wrap(s.withTrip(h, roles...)), httpkit.LimitByIP(s.tokLim, ip))
 	}
 	httpkit.Route(mux, "GET", "/v1/trips/{id}", trip(s.handleSnapshot, driver, watcher))
+	httpkit.Route(mux, "GET", "/v1/trips/{id}/events", trip(s.handleEvents, driver, watcher))
+	httpkit.Route(mux, "GET", "/v1/trips/{id}/track", trip(s.handleTrack, driver, watcher))
 	httpkit.Route(mux, "POST", "/v1/trips/{id}/positions", trip(s.handlePositions, driver))
 	httpkit.Route(mux, "POST", "/v1/trips/{id}/finish", trip(s.handleEnd(store.Finished), driver))
 	httpkit.Route(mux, "POST", "/v1/trips/{id}/cancel", trip(s.handleEnd(store.Cancelled), driver))

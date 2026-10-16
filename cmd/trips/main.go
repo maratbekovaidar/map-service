@@ -93,6 +93,7 @@ func run() error {
 		Version: watcher.Version,
 	})
 	go srv.RunSweeper(ctx, sweepInterval)
+	go srv.RunListener(ctx) // wakes the event streams
 
 	hs := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -104,6 +105,9 @@ func run() error {
 		MaxHeaderBytes:    64 << 10,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
+	// Event streams never finish on their own; end them so that shutdown
+	// only waits for ordinary requests. EventSource reconnects elsewhere.
+	hs.RegisterOnShutdown(srv.CloseStreams)
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("trips listening", "addr", cfg.ListenAddr, "city", cfg.Name, "osrm", cfg.OSRMURL,

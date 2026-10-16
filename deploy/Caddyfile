@@ -32,8 +32,6 @@
 }
 
 {$SITE_ADDRESS::80} {
-	encode zstd gzip
-
 	header {
 		-Server
 		X-Content-Type-Options nosniff
@@ -46,6 +44,8 @@
 	# address to X-Forwarded-For; both services trust it only from
 	# TRUSTED_PROXY_CIDRS. Trip tokens travel in Authorization, which Caddy
 	# never logs.
+	# No compression for trips: its answers are small, and an encoder would
+	# hold back the event stream (/v1/trips/{id}/events).
 	@trips path /v1/trips /v1/trips/*
 	handle @trips {
 		reverse_proxy trips:8080 {
@@ -56,6 +56,7 @@
 		}
 	}
 	handle {
+		encode zstd gzip
 		reverse_proxy gateway:8080 {
 			transport http {
 				dial_timeout 5s

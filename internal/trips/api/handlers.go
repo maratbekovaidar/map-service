@@ -337,20 +337,30 @@ func positionEvent(accepted []tracker.Fix, upd tracker.Update, version int) Posi
 
 // GET /v1/trips/{id}
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request, c caller) error {
-	snap, err := s.store.Snapshot(r.Context(), c.trip.ID)
+	snap, err := s.snapshot(r.Context(), c.trip.ID)
+	if err != nil {
+		return err
+	}
+	httpkit.WriteJSON(w, http.StatusOK, snap)
+	return nil
+}
+
+// snapshot is the trip as it is now, in one consistent read.
+func (s *Server) snapshot(ctx context.Context, tripID string) (*SnapshotResponse, error) {
+	snap, err := s.store.Snapshot(ctx, tripID)
 	if errors.Is(err, store.ErrNotFound) {
-		return httpkit.NotFound("no such trip")
+		return nil, httpkit.NotFound("no such trip")
 	}
 	if err != nil {
-		return httpkit.Internal(err)
+		return nil, httpkit.Internal(err)
 	}
-	resp := SnapshotResponse{Trip: tripDTO(snap.Trip), Route: routeDTO(snap.Route), LastEventID: snap.LastEventID}
+	resp := &SnapshotResponse{Trip: tripDTO(snap.Trip), Route: routeDTO(snap.Route), LastEventID: snap.LastEventID}
 	if snap.Position != nil {
 		p := storedPositionDTO(snap.Position)
 		resp.Position = &p
 		route, err := s.routes.get(snap.Trip.ID, snap.Route.Version, func() (*store.Route, error) { return snap.Route, nil })
 		if err != nil {
-			return httpkit.Internal(err)
+			return nil, httpkit.Internal(err)
 		}
 		// Before the first fix on a new route its progress is zero.
 		st := snap.Trip.State
@@ -361,8 +371,7 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request, c caller
 		dist, secs := route.tracker.Remaining(along)
 		resp.Progress = &Progress{Along: along, Remaining: dist, RemainingTime: secs, OffRoute: st.OffRoute}
 	}
-	httpkit.WriteJSON(w, http.StatusOK, resp)
-	return nil
+	return resp, nil
 }
 
 // POST /v1/trips/{id}/finish and /cancel. Ending an ended trip changes
